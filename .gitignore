@@ -1,0 +1,4 @@
+.env
+image_automation/
+__pycache__/
+.vscode/
