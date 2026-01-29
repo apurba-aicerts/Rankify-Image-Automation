@@ -28,10 +28,10 @@ RUN pip install --upgrade pip \
 COPY . .
 
 # Expose Streamlit port
-EXPOSE 8530
+EXPOSE 8540
 
 # Streamlit runtime config
-ENV STREAMLIT_SERVER_PORT=8530
+ENV STREAMLIT_SERVER_PORT=8540
 ENV STREAMLIT_SERVER_ADDRESS=0.0.0.0
 
 # Run the Streamlit app
