@@ -109,8 +109,8 @@ st.sidebar.header("⚙️ Configuration")
 model_name = st.sidebar.selectbox(
     "Gemini Model",
     [
-        "gemini-2.5-flash-image",
-        "gemini-2.0-flash-image-preview",
+        "gemini-3-pro-image-preview",
+        "gemini-2.5-flash-image"
     ],
 )
 
