@@ -153,17 +153,3 @@ DESIGN REQUIREMENTS:
 - Modern tech visuals, glowing UI elements
 - Clean text hierarchy
 """
-
-# TITLE:
-# Future-Proof Your Career with AI CERTs®
-
-# SUBTITLE:
-# Become Certified. Become AI-Ready.
-
-# BODY:
-# AI is transforming every industry.
-# Upskill with globally recognized, industry-aligned AI certifications
-# designed for professionals who want to stay ahead.
-
-# CTA BUTTON:
-# Enroll Now
