@@ -121,6 +121,35 @@ num_images = st.sidebar.number_input(
     value=1,
 )
 
+
+aspect_ratio = st.sidebar.selectbox(
+    "Aspect Ratio",
+    [
+        "1:1",
+        "2:3",
+        "3:2",
+        "3:4",
+        "4:3",
+        "4:5",
+        "5:4",
+        "9:16",
+        "16:9",
+        "21:9",
+    ],
+    index=0,
+)
+
+image_size = None
+
+if model_name == "gemini-3-pro-image-preview":
+    image_size = st.sidebar.selectbox(
+        "Image Resolution",
+        ["1K", "2K", "4K"],
+        index=1,  # default = 2K
+    )
+else:
+    st.sidebar.info("ℹ️ Image size is automatically managed for Flash model")
+
 uploaded_logo = st.sidebar.file_uploader(
     "Upload Logo (Optional)",
     type=["png", "jpg", "jpeg"],
@@ -138,6 +167,32 @@ with st.sidebar:
     st.markdown("#### Logo In Use")
     st.image(logo, width=80)
 
+# ----------------------------
+# Pricing Table (Official)
+# ----------------------------
+PRICE_TABLE = {
+    "gemini-2.5-flash-image": 0.039,  # fixed price per image
+    "gemini-3-pro-image-preview": {
+        "1K": 0.134,
+        "2K": 0.134,
+        "4K": 0.24,
+    }
+}
+
+def get_image_price(model, resolution="2K"):
+    if model == "gemini-3-pro-image-preview":
+        return PRICE_TABLE[model][resolution]
+    else:
+        return PRICE_TABLE[model]
+per_image_price = get_image_price(model_name, image_size or "2K")
+total_price = round(per_image_price * num_images, 3)
+
+with st.sidebar:
+    st.markdown("### 💰 Estimated Cost")
+    st.metric("Per Image (USD)", f"${per_image_price}")
+    st.metric("Total Cost (USD)", f"${total_price}")
+    st.caption("⚠️ Estimated cost. Actual billing may vary.")
+    
 # --------------------------------------------------
 # Main UI
 # --------------------------------------------------
@@ -189,11 +244,20 @@ if generate_btn:
             OUTPUT_DIR, f"aicerts_slide_{i}.png"
         )
 
+        # generator.generate_and_save(
+        #     brand_prompt=BRAND_PROMPT,
+        #     content_prompt=content_prompt,
+        #     logo=logo,
+        #     model=model_name,
+        #     output_path=output_file,
+        # )
         generator.generate_and_save(
             brand_prompt=BRAND_PROMPT,
             content_prompt=content_prompt,
             logo=logo,
             model=model_name,
+            aspect_ratio=aspect_ratio,
+            image_size=image_size,
             output_path=output_file,
         )
 
@@ -274,10 +338,10 @@ if st.session_state.generated_images:
                     # Thumbnail image with click functionality
                     st.image(img_path, use_container_width=True)
                     
-                    # View Full Size button
-                    if st.button(f"🔍 View Full Size", key=f"view_{img_idx}", use_container_width=True):
-                        st.session_state.expanded_image = img_idx
-                        st.rerun()
+                    # # View Full Size button
+                    # if st.button(f"🔍 View Full Size", key=f"view_{img_idx}", use_container_width=True):
+                    #     st.session_state.expanded_image = img_idx
+                    #     st.rerun()
                     
                     # Download button
                     with open(img_path, "rb") as f:
@@ -294,6 +358,11 @@ if st.session_state.generated_images:
                 
                 img_idx += 1
 
-    # Summary info
     st.markdown("---")
-    st.info(f"📊 Total images generated: {num_imgs} | Model used: {model_name}")
+    st.info(
+        f"📊 Total images generated: {num_imgs} | "
+        f"Model used: {model_name} | "
+        f"Estimated price: ${total_price} "
+        f"(${per_image_price} per image)"
+    )
+
