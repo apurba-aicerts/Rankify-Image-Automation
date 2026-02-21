@@ -8,7 +8,7 @@ ENV PYTHONUNBUFFERED=1
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies required for audio + scientific libs
+# Install system dependencies required for image processing & build tools
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     libsndfile1 \
@@ -27,12 +27,11 @@ RUN pip install --upgrade pip \
 # Copy application source
 COPY . .
 
-# Expose Streamlit port
-EXPOSE 8540
+# Create outputs directory
+RUN mkdir -p /app/outputs
 
-# Streamlit runtime config
-ENV STREAMLIT_SERVER_PORT=8540
-ENV STREAMLIT_SERVER_ADDRESS=0.0.0.0
+# Expose FastAPI port
+EXPOSE 9600
 
-# Run the Streamlit app
-CMD ["streamlit", "run", "app.py"]
+# Run the FastAPI app with uvicorn
+CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "9600"]
