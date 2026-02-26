@@ -7,9 +7,9 @@ POST   /api/generate              – Generate carousel images (JSON body)
 POST   /api/generate-with-logo    – Generate with custom logo (multipart form)
 GET    /api/models                – List available Gemini models
 GET    /api/image-sizes           – List available image sizes & aspect ratios
-GET    /api/gallery               – List every image in the gallery
-GET    /api/gallery/{filename}    – Download / view a single image
-DELETE /api/gallery/{filename}    – Remove a single image
+GET    /api/gallery               – List every image in the gallery (from S3)
+GET    /api/gallery/{filename}    – Download / view a single image (presigned S3 URL)
+DELETE /api/gallery/{filename}    – Remove a single image from S3
 GET    /health                    – Health check
 
 Authentication
@@ -19,18 +19,21 @@ Every request must include the header:
 
 Image Lifecycle
 ───────────────
-Images are stored on disk under `outputs/`.
-A background scheduler purges files older than 24 hours automatically.
+Images are generated locally (temp), uploaded to AWS S3, then the local
+copy is removed.  A background scheduler purges S3 objects older than
+IMAGE_TTL_HOURS automatically.
 """
 
 import os
 import uuid
 import asyncio
+import tempfile
 from pathlib import Path
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Optional, List
 from contextlib import asynccontextmanager
 
+from botocore.exceptions import ClientError
 from fastapi import (
     FastAPI,
     HTTPException,
@@ -40,7 +43,7 @@ from fastapi import (
     File,
     Form,
 )
-from fastapi.responses import FileResponse
+from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from PIL import Image
@@ -48,15 +51,24 @@ from dotenv import load_dotenv
 
 from generator import AICertsImageGenerator
 from prompts import BRAND_PROMPT, build_content_prompt
+from helpers.s3_helper import (
+    upload_file as s3_upload,
+    generate_presigned_url as s3_presigned_url,
+    delete_object as s3_delete,
+    head_object as s3_head,
+    list_objects as s3_list,
+    delete_objects_older_than as s3_cleanup,
+    s3_key,
+    S3_BUCKET_NAME,
+    S3_PREFIX,
+)
 
 # ──────────────────────────────────────────────
 # Setup
 # ──────────────────────────────────────────────
 load_dotenv()
 
-OUTPUT_DIR = Path("outputs")
 DEFAULT_LOGO_PATH = Path("assets/default_logo.jpg")
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 API_KEY: str = os.getenv("API_KEY", "")
 GOOGLE_API_KEY: str = os.getenv("GOOGLE_API_KEY", "")
@@ -95,18 +107,13 @@ def _get_image_price(model: str, resolution: str = "2K") -> float:
 # Background cleanup scheduler
 # ──────────────────────────────────────────────
 async def _cleanup_old_images():
-    """Periodically delete images older than IMAGE_TTL_HOURS."""
+    """Periodically delete S3 objects older than IMAGE_TTL_HOURS."""
     while True:
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=IMAGE_TTL_HOURS)
-        for file in OUTPUT_DIR.iterdir():
-            if file.is_file() and file.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
-                mtime = datetime.fromtimestamp(file.stat().st_mtime, tz=timezone.utc)
-                if mtime < cutoff:
-                    try:
-                        file.unlink()
-                    except OSError:
-                        pass
-        await asyncio.sleep(3600)  # run every hour
+        try:
+            s3_cleanup(IMAGE_TTL_HOURS)
+        except Exception:
+            pass  # don't crash the scheduler
+        await asyncio.sleep(900)  # run every 15 minutes
 
 
 @asynccontextmanager
@@ -126,8 +133,8 @@ async def lifespan(app: FastAPI):
 # ──────────────────────────────────────────────
 app = FastAPI(
     title="AI CERTs® Image Generator API",
-    version="1.0.0",
-    description="Generate branded carousel images for AI CERTs® social media.",
+    version="2.0.0",
+    description="Generate branded carousel images for AI CERTs® social media. Images stored on AWS S3.",
     lifespan=lifespan,
 )
 
@@ -174,6 +181,7 @@ class GenerateRequest(BaseModel):
 class ImageMeta(BaseModel):
     filename: str
     url: str
+    s3_key: str
     size_bytes: int
     created_at: str
     age_hours: float
@@ -200,15 +208,18 @@ class DeleteResponse(BaseModel):
 # ──────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────
-def _build_image_meta(filepath: Path, base_url: str = "/api/gallery") -> ImageMeta:
-    stat = filepath.stat()
-    created = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
-    age = (datetime.now(timezone.utc) - created).total_seconds() / 3600
+def _build_image_meta_s3(filename: str, size_bytes: int, last_modified: datetime) -> ImageMeta:
+    """Build ImageMeta from S3 object metadata."""
+    if last_modified.tzinfo is None:
+        last_modified = last_modified.replace(tzinfo=timezone.utc)
+    age = (datetime.now(timezone.utc) - last_modified).total_seconds() / 3600
+    presigned_url = s3_presigned_url(filename)
     return ImageMeta(
-        filename=filepath.name,
-        url=f"{base_url}/{filepath.name}",
-        size_bytes=stat.st_size,
-        created_at=created.isoformat(),
+        filename=filename,
+        url=presigned_url,
+        s3_key=s3_key(filename),
+        size_bytes=size_bytes,
+        created_at=last_modified.isoformat(),
         age_hours=round(age, 2),
     )
 
@@ -218,7 +229,12 @@ def _build_image_meta(filepath: Path, base_url: str = "/api/gallery") -> ImageMe
 # ──────────────────────────────────────────────
 @app.get("/health")
 async def health():
-    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
+    return {
+        "status": "ok",
+        "storage": "s3",
+        "s3_bucket": S3_BUCKET_NAME,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 # ──────────────────────────────────────────────
@@ -300,7 +316,10 @@ def _run_generation(
 
     for i in range(1, _num + 1):
         filename = f"aicerts_{batch_id}_{i}.png"
-        output_path = OUTPUT_DIR / filename
+
+        # Generate to a temporary local file, then upload to S3
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            tmp_path = tmp.name
 
         try:
             generator.generate_and_save(
@@ -310,15 +329,37 @@ def _run_generation(
                 model=_model,
                 aspect_ratio=_ratio,
                 image_size=_size if _model == "gemini-3-pro-image-preview" else None,
-                output_path=str(output_path),
+                output_path=tmp_path,
+            )
+
+            # Upload to S3
+            s3_upload(tmp_path, filename)
+
+            # Get file size before removing local copy
+            file_size = os.path.getsize(tmp_path)
+        except ClientError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"S3 upload failed for image {i}: {str(exc)}",
             )
         except Exception as exc:
             raise HTTPException(
                 status_code=502,
                 detail=f"Image generation failed for image {i}: {str(exc)}",
             )
+        finally:
+            # Always clean up the local temp file
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
-        generated.append(_build_image_meta(output_path))
+        meta = _build_image_meta_s3(
+            filename=filename,
+            size_bytes=file_size,
+            last_modified=datetime.now(timezone.utc),
+        )
+        generated.append(meta)
 
     per_price = _get_image_price(_model, _size)
     total_price = round(per_price * _num, 3)
@@ -328,7 +369,7 @@ def _run_generation(
         model_used=_model,
         per_image_price_usd=per_price,
         total_price_usd=total_price,
-        message=f"Successfully generated {_num} image(s).",
+        message=f"Successfully generated {_num} image(s) and uploaded to S3.",
     )
 
 
@@ -401,11 +442,35 @@ async def generate_images_form(
     summary="List all images in the gallery",
 )
 async def list_gallery():
-    """Return metadata for every image currently stored on the server."""
+    """Return metadata for every image currently stored in S3."""
+    try:
+        s3_objects = s3_list()
+    except ClientError as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to list S3 objects: {str(exc)}")
+
     images: list[ImageMeta] = []
-    for f in sorted(OUTPUT_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
-        if f.is_file() and f.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
-            images.append(_build_image_meta(f))
+    # Sort newest first
+    s3_objects.sort(key=lambda o: o["LastModified"], reverse=True)
+
+    for obj in s3_objects:
+        key: str = obj["Key"]
+        # Skip the prefix-only entry (folder marker)
+        if key == S3_PREFIX:
+            continue
+        filename = key.removeprefix(S3_PREFIX)
+        if not filename:
+            continue
+        # Only include image files
+        if not filename.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
+            continue
+        images.append(
+            _build_image_meta_s3(
+                filename=filename,
+                size_bytes=obj["Size"],
+                last_modified=obj["LastModified"],
+            )
+        )
+
     return GalleryResponse(total=len(images), images=images)
 
 
@@ -415,13 +480,20 @@ async def list_gallery():
 @app.get(
     "/api/gallery/{filename}",
     dependencies=[Depends(verify_api_key)],
-    summary="Download / view a single image",
+    summary="Download / view a single image (redirects to presigned S3 URL)",
 )
 async def get_image(filename: str):
-    filepath = OUTPUT_DIR / filename
-    if not filepath.is_file():
-        raise HTTPException(status_code=404, detail="Image not found.")
-    return FileResponse(filepath, media_type="image/png", filename=filename)
+    """
+    Returns a temporary presigned S3 URL for the requested image.
+    The client is redirected (HTTP 307) to the presigned URL.
+    """
+    try:
+        s3_head(filename)  # verify it exists
+    except ClientError:
+        raise HTTPException(status_code=404, detail="Image not found in S3.")
+
+    presigned_url = s3_presigned_url(filename)
+    return RedirectResponse(url=presigned_url, status_code=307)
 
 
 # ──────────────────────────────────────────────
@@ -431,11 +503,18 @@ async def get_image(filename: str):
     "/api/gallery/{filename}",
     response_model=DeleteResponse,
     dependencies=[Depends(verify_api_key)],
-    summary="Delete a single image",
+    summary="Delete a single image from S3",
 )
 async def delete_image(filename: str):
-    filepath = OUTPUT_DIR / filename
-    if not filepath.is_file():
-        raise HTTPException(status_code=404, detail="Image not found.")
-    filepath.unlink()
-    return DeleteResponse(message="Image deleted successfully.", filename=filename)
+    """Delete an image from the S3 bucket."""
+    try:
+        s3_head(filename)  # verify it exists
+    except ClientError:
+        raise HTTPException(status_code=404, detail="Image not found in S3.")
+
+    try:
+        s3_delete(filename)
+    except ClientError as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to delete from S3: {str(exc)}")
+
+    return DeleteResponse(message="Image deleted successfully from S3.", filename=filename)

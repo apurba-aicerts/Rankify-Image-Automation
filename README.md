@@ -1,6 +1,6 @@
 # AI CERTs® Image Generator — Backend API
 
-FastAPI backend that generates branded carousel images for AI CERTs® social media posts using Google Gemini models.
+FastAPI backend that generates branded carousel images for AI CERTs® social media posts using Google Gemini models. **Images are stored on AWS S3.**
 
 ---
 
@@ -18,6 +18,10 @@ Edit `.env` and fill in your keys:
 GOOGLE_API_KEY="your-google-gemini-api-key"
 API_KEY="your-secret-api-key-for-header-auth"
 IMAGE_TTL_HOURS=24
+AWS_ACCESS_KEY_ID="your-aws-access-key-id"
+AWS_SECRET_ACCESS_KEY="your-aws-secret-access-key"
+AWS_S3_BUCKET_NAME="aicerts-image-generator"
+AWS_REGION="us-east-1"
 ```
 
 | Variable | Description |
@@ -25,10 +29,44 @@ IMAGE_TTL_HOURS=24
 | `GOOGLE_API_KEY` | Google Gemini API key (required for image generation) |
 | `API_KEY` | Secret key that frontend must send in the `x-api-key` header |
 | `IMAGE_TTL_HOURS` | Auto-delete images older than this (default: `24` hours) |
+| `AWS_ACCESS_KEY_ID` | AWS IAM access key ID |
+| `AWS_SECRET_ACCESS_KEY` | AWS IAM secret access key |
+| `AWS_S3_BUCKET_NAME` | S3 bucket name for storing generated images |
+| `AWS_REGION` | AWS region where the S3 bucket is hosted (default: `us-east-1`) |
 
 ---
 
-### 2. Run with Docker (Recommended)
+#### IAM Permissions Required
+
+The IAM user/role whose credentials you use needs the following S3 permissions on the bucket:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:DeleteObject",
+        "s3:ListBucket",
+        "s3:HeadObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::aicerts-image-generator",
+        "arn:aws:s3:::aicerts-image-generator/*"
+      ]
+    }
+  ]
+}
+```
+
+You can attach this as an **inline policy** or create a managed policy and attach it to the IAM user/role.
+
+---
+
+### 3. Run with Docker (Recommended)
 
 ```bash
 docker build -t aicerts-image-api .
@@ -39,7 +77,7 @@ The API will be available at **`http://localhost:9600`**
 
 ---
 
-### 3. Run Locally (Without Docker)
+### 4. Run Locally (Without Docker)
 
 ```bash
 pip install -r requirements.txt
@@ -68,12 +106,14 @@ Missing or invalid keys return `401 Unauthorized`.
 GET /health
 ```
 
-No authentication required. Returns server status.
+No authentication required. Returns server status and S3 bucket info.
 
 **Response:**
 ```json
 {
   "status": "ok",
+  "storage": "s3",
+  "s3_bucket": "aicerts-image-generator",
   "timestamp": "2026-02-20T16:02:17.000000+00:00"
 }
 ```
@@ -143,7 +183,7 @@ x-api-key: <your-api-key>
 POST /api/generate
 ```
 
-Generate carousel images using the default logo. Send a JSON body.
+Generate carousel images using the default logo. Send a JSON body. Images are uploaded to S3 and presigned URLs are returned.
 
 **Headers:**
 ```
@@ -176,7 +216,8 @@ x-api-key: <your-api-key>
   "images": [
     {
       "filename": "aicerts_a1b2c3d4_1.png",
-      "url": "/api/gallery/aicerts_a1b2c3d4_1.png",
+      "url": "https://aicerts-image-generator.s3.amazonaws.com/generated-images/aicerts_a1b2c3d4_1.png?X-Amz-Algorithm=...",
+      "s3_key": "generated-images/aicerts_a1b2c3d4_1.png",
       "size_bytes": 245120,
       "created_at": "2026-02-20T16:05:00+00:00",
       "age_hours": 0.01
@@ -185,9 +226,11 @@ x-api-key: <your-api-key>
   "model_used": "gemini-3-pro-image-preview",
   "per_image_price_usd": 0.134,
   "total_price_usd": 0.268,
-  "message": "Successfully generated 2 image(s)."
+  "message": "Successfully generated 2 image(s) and uploaded to S3."
 }
 ```
+
+> **Note:** The `url` field is a **presigned S3 URL** that expires after 1 hour. Use it directly to display or download the image.
 
 ---
 
@@ -234,7 +277,7 @@ curl -X POST http://localhost:9600/api/generate-with-logo \
 GET /api/gallery
 ```
 
-Returns metadata for every image currently stored on the server (sorted newest first).
+Returns metadata for every image currently stored in S3 (sorted newest first).
 
 **Headers:**
 ```
@@ -248,7 +291,8 @@ x-api-key: <your-api-key>
   "images": [
     {
       "filename": "aicerts_a1b2c3d4_1.png",
-      "url": "/api/gallery/aicerts_a1b2c3d4_1.png",
+      "url": "https://aicerts-image-generator.s3.amazonaws.com/generated-images/aicerts_a1b2c3d4_1.png?X-Amz-Algorithm=...",
+      "s3_key": "generated-images/aicerts_a1b2c3d4_1.png",
       "size_bytes": 245120,
       "created_at": "2026-02-20T16:05:00+00:00",
       "age_hours": 2.5
@@ -265,7 +309,7 @@ x-api-key: <your-api-key>
 GET /api/gallery/{filename}
 ```
 
-Returns the image file directly (can be used as `<img src="...">` in frontend).
+Redirects (HTTP 307) to a **presigned S3 URL** for the image. The presigned URL expires after 1 hour.
 
 **Headers:**
 ```
@@ -277,7 +321,7 @@ x-api-key: <your-api-key>
 GET /api/gallery/aicerts_a1b2c3d4_1.png
 ```
 
-Returns: `image/png` binary.
+Returns: `307 Temporary Redirect` → presigned S3 URL.
 
 ---
 
@@ -287,6 +331,8 @@ Returns: `image/png` binary.
 DELETE /api/gallery/{filename}
 ```
 
+Deletes the image from S3.
+
 **Headers:**
 ```
 x-api-key: <your-api-key>
@@ -295,7 +341,7 @@ x-api-key: <your-api-key>
 **Response:**
 ```json
 {
-  "message": "Image deleted successfully.",
+  "message": "Image deleted successfully from S3.",
   "filename": "aicerts_a1b2c3d4_1.png"
 }
 ```
@@ -304,10 +350,11 @@ x-api-key: <your-api-key>
 
 ## Image Lifecycle
 
-- Images are stored on the server in the `outputs/` directory.
-- A **background job runs every hour** and automatically deletes images older than `IMAGE_TTL_HOURS` (default: 24 hours).
+- Images are **generated locally** in a temp directory, **uploaded to S3**, and the local copy is **immediately deleted**.
+- All images are stored in S3 under the `generated-images/` prefix.
+- A **background job runs every hour** and automatically deletes S3 objects older than `IMAGE_TTL_HOURS` (default: 24 hours).
 - Images can also be manually deleted via the `DELETE /api/gallery/{filename}` endpoint.
-- _S3 bucket integration is planned for a future release._
+- Image URLs returned by the API are **presigned S3 URLs** valid for 1 hour.
 
 ---
 
@@ -334,10 +381,10 @@ All errors follow this format:
 |-------------|---------|
 | `401` | Invalid or missing `x-api-key` |
 | `400` | Invalid request parameters (bad model, aspect ratio, etc.) |
-| `404` | Image not found |
+| `404` | Image not found in S3 |
 | `422` | Missing required fields |
 | `500` | Server misconfiguration (missing env vars) |
-| `502` | Upstream Gemini API failure |
+| `502` | Upstream Gemini API failure or S3 error |
 
 ---
 
@@ -345,13 +392,15 @@ All errors follow this format:
 
 ```
 ├── api.py              # FastAPI backend (main entry point)
-├── app.py              # Streamlit UI (legacy, not used in Docker)
 ├── generator.py        # AICertsImageGenerator — calls Gemini API
 ├── prompts.py          # Brand prompt & content prompt builder
+├── helpers/
+│   ├── __init__.py
+│   └── s3_helper.py    # AWS S3 helper functions (upload, download, delete, list, cleanup)
 ├── Dockerfile          # Docker config — runs FastAPI on port 9600
-├── requirements.txt    # Python dependencies
+├── requirements.txt    # Python dependencies (includes boto3)
 ├── .env.example        # Environment variable template
 ├── assets/
 │   └── default_logo.jpg
-└── outputs/            # Generated images (auto-cleaned after 24h)
+└── app.py              # Streamlit UI (legacy, not used in Docker)
 ```
