@@ -34,4 +34,4 @@ RUN mkdir -p /app/outputs
 EXPOSE 9600
 
 # Run the FastAPI app with uvicorn
-CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "9600"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "9600"]

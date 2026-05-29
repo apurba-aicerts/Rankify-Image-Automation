@@ -1,4 +1,14 @@
-BRAND_PROMPT = """
+"""
+Long-form governance text for the packaged **AI CERTs** demo brand seed only.
+
+Runtime generation uses :mod:`generation.prompt_builder` with a persisted
+:class:`~brands.schemas.BrandConfiguration`; this string is embedded in that seed's
+``generation.governance_prompt_template``.
+"""
+
+from __future__ import annotations
+
+DEMO_AI_CERTS_GOVERNANCE_PROMPT = """
 You are the official AI CERTs® Social Media Content & Design Agent.
 
 Your role is to analyze, structure, and design social media creatives strictly according to AI CERTs® official brand guidelines.  
@@ -139,17 +149,4 @@ Whenever creating a post, ALWAYS provide:
 Acknowledge these guidelines internally and apply them strictly.
 Do not explain the guidelines unless asked.
 Wait for content input before generating output.
-"""
-def build_content_prompt(content: str) -> str:
-    return f"""
-Create a professional 1080x1080 LinkedIn carousel-style social media post.
-
-{content}
-
-DESIGN REQUIREMENTS:
-- Place AI CERTs® logo at the top-left
-- Use gold (#CFA935) to highlight keywords like AI-Ready, Certified, Future-Proof
-- Dark navy / midnight blue gradient background
-- Modern tech visuals, glowing UI elements
-- Clean text hierarchy
 """

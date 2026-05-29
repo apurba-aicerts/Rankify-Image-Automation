@@ -1,0 +1,2 @@
+# Install only for this experiment (does not change the main API stack yet).
+openai>=1.54.0

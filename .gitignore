@@ -4,3 +4,11 @@ image_env/
 __pycache__/
 .vscode/
 img_rankify
+generated-images/
+backend/generated-images/
+backend/data/
+backend/outputs/
+backend/__pycache__/
+backend/**/__pycache__/
+frontend/node_modules/
+frontend/dist/
