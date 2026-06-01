@@ -16,8 +16,9 @@ from PIL import Image
 from brands.repository import BrandRepository
 from brands.schemas import BrandConfiguration
 from gallery_url_signing import GALLERY_IMAGE_URL_TTL_SECONDS, build_brand_gallery_image_view_url
-from gemini_slide_client import GeminiBrandImageClient, GeminiNoImageInResponse
 from generation.generation_audit import write_generation_audit_file
+from generation.image_providers import ImageProviderNoOutput, estimate_price_usd, generate_slide_to_file
+from generation.image_providers.registry import model_supports_image_size
 from generation.prompt_builder import build_governance_system_prompt, build_slide_user_prompt
 from gallery_local_store import (
     commit_temp_file_to_gallery,
@@ -26,12 +27,6 @@ from gallery_local_store import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _estimate_usd_price_per_image(model_id: str, resolution: str, price_table: dict) -> float:
-    if model_id == "gemini-3-pro-image-preview":
-        return float(price_table[model_id].get(resolution, 0.134))
-    return float(price_table.get(model_id, 0.039))
 
 
 def run_brand_slide_generation(
@@ -46,12 +41,12 @@ def run_brand_slide_generation(
     logo_override: Optional[Image.Image],
     logo_fallback_path: Path,
     google_api_key: str,
+    openai_api_key: str,
     public_origin: str,
     signing_secret: str,
     allowed_models: tuple[str, ...],
     allowed_ratios: tuple[str, ...],
     allowed_sizes: tuple[str, ...],
-    price_table: dict,
 ) -> dict[str, Any]:
     """
     Execute validation, Gemini calls, and gallery writes.
@@ -73,8 +68,12 @@ def run_brand_slide_generation(
             status_code=400,
             detail=f"Invalid image_size. Choose from {list(allowed_sizes)}",
         )
-    if not google_api_key:
-        raise HTTPException(status_code=500, detail="GOOGLE_API_KEY is not configured on the server.")
+    if model_supports_image_size(model_id) and model_id != "gemini-3-pro-image-preview":
+        if image_size not in allowed_sizes:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid image_size. Choose from {list(allowed_sizes)}",
+            )
 
     batch_id = uuid.uuid4().hex[:8]
 
@@ -131,7 +130,6 @@ def run_brand_slide_generation(
         or "(not written — RANKIFY_GENERATION_AUDIT=0, or disk error; see logs)",
     )
 
-    client = GeminiBrandImageClient(google_api_key)
     images_out: list[dict[str, Any]] = []
     logger.info(
         "Slide generation started brand_id=%s batch=%s slides=%s model=%s aspect=%s",
@@ -147,14 +145,16 @@ def run_brand_slide_generation(
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
             temp_png_path = tmp.name
         try:
-            client.generate_brand_slide_to_file(
+            generate_slide_to_file(
+                model_id=model_id,
                 brand_governance_prompt=governance,
                 slide_user_prompt=slide_user,
                 logo=logo_image,
                 output_file_path=temp_png_path,
-                model_id=model_id,
                 aspect_ratio=aspect_ratio,
-                image_size=image_size if model_id == "gemini-3-pro-image-preview" else None,
+                image_size=image_size,
+                google_api_key=google_api_key,
+                openai_api_key=openai_api_key,
             )
             commit_temp_file_to_gallery(brand_id, temp_png_path, filename)
             file_size = resolved_gallery_file_path(brand_id, filename).stat().st_size
@@ -166,10 +166,11 @@ def run_brand_slide_generation(
                 filename,
                 file_size,
             )
-        except GeminiNoImageInResponse as exc:
+        except ImageProviderNoOutput as exc:
             logger.warning(
-                "Slide %s Gemini returned no image brand_id=%s finish_reason=%s",
+                "Slide %s %s returned no image brand_id=%s finish_reason=%s",
                 index,
+                exc.provider,
                 brand_id,
                 getattr(exc, "finish_reason", None),
             )
@@ -209,7 +210,7 @@ def run_brand_slide_generation(
             }
         )
 
-    per_image = _estimate_usd_price_per_image(model_id, image_size, price_table)
+    per_image = estimate_price_usd(model_id, image_size)
     total = round(per_image * slide_count, 3)
 
     logger.info(

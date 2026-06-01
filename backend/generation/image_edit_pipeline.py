@@ -21,20 +21,15 @@ from gallery_local_store import (
     validate_gallery_filename,
 )
 from gallery_url_signing import GALLERY_IMAGE_URL_TTL_SECONDS, build_brand_gallery_image_view_url
-from gemini_slide_client import GeminiBrandImageClient, GeminiNoImageInResponse
 from generation.edit_prompts import (
     EDIT_GOVERNANCE_SYSTEM,
     build_brand_edit_context_snippet,
     build_edit_user_prompt,
 )
+from generation.image_providers import ImageProviderNoOutput, estimate_price_usd, edit_image_to_file
+from generation.image_providers.registry import model_supports_image_size
 
 logger = logging.getLogger(__name__)
-
-
-def _estimate_usd_price_per_image(model_id: str, resolution: str, price_table: dict) -> float:
-    if model_id == "gemini-3-pro-image-preview":
-        return float(price_table[model_id].get(resolution, 0.134))
-    return float(price_table.get(model_id, 0.039))
 
 
 def run_gallery_image_edit(
@@ -47,12 +42,12 @@ def run_gallery_image_edit(
     aspect_ratio: str,
     image_size: str,
     google_api_key: str,
+    openai_api_key: str,
     public_origin: str,
     signing_secret: str,
     allowed_models: tuple[str, ...],
     allowed_ratios: tuple[str, ...],
     allowed_sizes: tuple[str, ...],
-    price_table: dict,
 ) -> dict[str, Any]:
     """
     Load a gallery PNG/JPEG, call Gemini image edit, commit a new file, return ``BrandSlideGenerateResponse``-shaped dict.
@@ -72,8 +67,12 @@ def run_gallery_image_edit(
             status_code=400,
             detail=f"Invalid image_size. Choose from {list(allowed_sizes)}",
         )
-    if not google_api_key:
-        raise HTTPException(status_code=500, detail="GOOGLE_API_KEY is not configured on the server.")
+    if model_supports_image_size(model_id) and model_id != "gemini-3-pro-image-preview":
+        if image_size not in allowed_sizes:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid image_size. Choose from {list(allowed_sizes)}",
+            )
 
     try:
         validate_gallery_filename(source_filename)
@@ -101,30 +100,30 @@ def run_gallery_image_edit(
     logger.debug("Image edit user prompt preview:\n%s", user_prompt[:2500])
 
     out_name = f"rankify_edit_{uuid.uuid4().hex[:10]}.png"
-    client = GeminiBrandImageClient(google_api_key)
-
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
         temp_png_path = tmp.name
     try:
-        client.edit_image_to_file(
+        edit_image_to_file(
+            model_id=model_id,
             edit_system_prompt=EDIT_GOVERNANCE_SYSTEM,
             edit_user_prompt=user_prompt,
             base_image=base,
             output_file_path=temp_png_path,
-            model_id=model_id,
             aspect_ratio=aspect_ratio,
-            image_size=image_size if model_id == "gemini-3-pro-image-preview" else None,
+            image_size=image_size,
+            google_api_key=google_api_key,
+            openai_api_key=openai_api_key,
         )
         commit_temp_file_to_gallery(brand_id, temp_png_path, out_name)
         file_size = resolved_gallery_file_path(brand_id, out_name).stat().st_size
-    except GeminiNoImageInResponse as exc:
+    except ImageProviderNoOutput as exc:
         detail = str(exc).strip()
         if len(detail) > 1800:
             detail = detail[:1797] + "..."
         hint = (
             " The image model sometimes declines a pass (especially on images already edited once). "
             "Try again with a shorter instruction, edit from the original slide file in Versions, "
-            "or switch the edit model to gemini-3-pro-image-preview if your client supports it."
+            "or try another model (e.g. gemini-3-pro-image-preview or openai:gpt-image-2)."
         )
         raise HTTPException(status_code=422, detail=detail + hint) from exc
     except HTTPException:
@@ -147,10 +146,9 @@ def run_gallery_image_edit(
         filename=out_name,
         ttl_seconds=GALLERY_IMAGE_URL_TTL_SECONDS,
     )
-    per_image = _estimate_usd_price_per_image(
+    per_image = estimate_price_usd(
         model_id,
-        image_size if model_id == "gemini-3-pro-image-preview" else "2K",
-        price_table,
+        image_size if model_id == "gemini-3-pro-image-preview" or model_supports_image_size(model_id) else "2K",
     )
 
     logger.info(

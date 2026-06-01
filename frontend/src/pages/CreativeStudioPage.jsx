@@ -16,6 +16,7 @@ import {
   buildCaptionHashtagDraft,
 } from "../lib/creativeDirectionPreview.js";
 import { toastComingSoon } from "../lib/featureMessages.js";
+import { modelOptionLabel, modelSupportsImageSize } from "../lib/modelCatalog.js";
 import "../styles/studio.css";
 
 function aspectRatioToCss(r) {
@@ -46,7 +47,7 @@ export function CreativeStudioPage() {
   const [brand, setBrand] = useState(null);
   const [logoOk, setLogoOk] = useState(false);
   const [brandLogoSrc, setBrandLogoSrc] = useState(null);
-  const [models, setModels] = useState([]);
+  const [modelCatalog, setModelCatalog] = useState([]);
   const [ratios, setRatios] = useState([]);
   const [sizes, setSizes] = useState([]);
   const [modelName, setModelName] = useState("gemini-3-pro-image-preview");
@@ -152,8 +153,9 @@ export function CreativeStudioPage() {
       setImageSize(defSize && ["1K", "2K", "4K"].includes(defSize) ? defSize : "2K");
       setRatios(meta.aspect_ratios || []);
       setSizes(meta.image_sizes || []);
-      const ids = (mlist.models || []).map((m) => m.model_name).filter(Boolean);
-      setModels(ids);
+      const catalog = (mlist.models || []).filter((m) => m.model_name);
+      setModelCatalog(catalog);
+      const ids = catalog.map((m) => m.model_name);
       setModelName((prev) => (ids.length && !ids.includes(prev) ? ids[0] : prev));
 
       const pref = (b.social_defaults?.preferred_platforms || []).map((p) => String(p).toLowerCase());
@@ -237,7 +239,7 @@ export function CreativeStudioPage() {
         model_name: modelName,
         num_images: 1,
         aspect_ratio: aspectRatio,
-        image_size: modelName === "gemini-3-pro-image-preview" ? imageSize : undefined,
+        image_size: modelSupportsImageSize(modelCatalog, modelName) ? imageSize : undefined,
       };
       const data = await client.request("/api/generate", { method: "POST", json: body });
       setResult(data);
@@ -302,7 +304,7 @@ export function CreativeStudioPage() {
         model_name: modelName,
         aspect_ratio: aspectRatio,
       };
-      if (modelName === "gemini-3-pro-image-preview") {
+      if (modelSupportsImageSize(modelCatalog, modelName)) {
         editBody.image_size = imageSize;
       }
       const data = await client.request(`/api/brands/${encodeURIComponent(brandId)}/gallery/edit`, {
@@ -461,14 +463,14 @@ export function CreativeStudioPage() {
             <label className="os-inline">
               <span className="os-label">Model</span>
               <select className="os-select" value={modelName} onChange={(e) => setModelName(e.target.value)}>
-                {models.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
+                {modelCatalog.map((m) => (
+                  <option key={m.model_name} value={m.model_name}>
+                    {modelOptionLabel(m)}
                   </option>
                 ))}
               </select>
             </label>
-            {modelName === "gemini-3-pro-image-preview" && (
+            {modelSupportsImageSize(modelCatalog, modelName) && (
               <label className="os-inline">
                 <span className="os-label">Size</span>
                 <select className="os-select" value={imageSize} onChange={(e) => setImageSize(e.target.value)}>

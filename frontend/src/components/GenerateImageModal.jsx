@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Modal } from "./Modal.jsx";
 import { useApp } from "../context/AppContext.jsx";
 import { SAMPLE_POST } from "../constants/defaults.js";
+import { modelOptionLabel, modelSupportsImageSize } from "../lib/modelCatalog.js";
 
 export function GenerateImageModal({ open, brandId, onClose, onGenerated }) {
   const { client, showToast } = useApp();
@@ -12,7 +13,7 @@ export function GenerateImageModal({ open, brandId, onClose, onGenerated }) {
   const [imageSize, setImageSize] = useState("2K");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
-  const [models, setModels] = useState([]);
+  const [modelCatalog, setModelCatalog] = useState([]);
   const [ratios, setRatios] = useState([]);
   const [sizes, setSizes] = useState([]);
 
@@ -32,8 +33,9 @@ export function GenerateImageModal({ open, brandId, onClose, onGenerated }) {
         setImageSize(brand.social_defaults?.default_image_size || "2K");
         setRatios(meta.aspect_ratios || []);
         setSizes(meta.image_sizes || []);
-        const ids = (mlist.models || []).map((m) => m.model_name).filter(Boolean);
-        setModels(ids);
+        const catalog = (mlist.models || []).filter((m) => m.model_name);
+        setModelCatalog(catalog);
+        const ids = catalog.map((m) => m.model_name);
         if (ids.length && !ids.includes(modelName)) setModelName(ids[0]);
       } catch (e) {
         if (!cancelled) showToast(e.message || String(e), "error");
@@ -55,7 +57,7 @@ export function GenerateImageModal({ open, brandId, onClose, onGenerated }) {
         model_name: modelName,
         num_images: numImages,
         aspect_ratio: aspectRatio,
-        image_size: modelName === "gemini-3-pro-image-preview" ? imageSize : undefined,
+        image_size: modelSupportsImageSize(modelCatalog, modelName) ? imageSize : undefined,
       };
       const data = await client.request("/api/generate", { method: "POST", json: body });
       setResult(data);
@@ -91,9 +93,9 @@ export function GenerateImageModal({ open, brandId, onClose, onGenerated }) {
       <label className="field">
         Model
         <select value={modelName} onChange={(e) => setModelName(e.target.value)}>
-          {models.map((m) => (
-            <option key={m} value={m}>
-              {m}
+          {modelCatalog.map((m) => (
+            <option key={m.model_name} value={m.model_name}>
+              {modelOptionLabel(m)}
             </option>
           ))}
         </select>
@@ -119,7 +121,7 @@ export function GenerateImageModal({ open, brandId, onClose, onGenerated }) {
             ))}
           </select>
         </label>
-        {modelName === "gemini-3-pro-image-preview" && (
+        {modelSupportsImageSize(modelCatalog, modelName) && (
           <label className="field">
             Image size
             <select value={imageSize} onChange={(e) => setImageSize(e.target.value)}>

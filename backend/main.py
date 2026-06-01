@@ -48,6 +48,7 @@ from gallery_url_signing import (
 from generation.campaign_assembler import build_structured_campaign_copy
 from generation.image_edit_pipeline import run_gallery_image_edit
 from generation.openai_social_copy_service import generate_social_copy_openai
+from generation.image_providers.registry import ALLOWED_IMAGE_MODEL_IDS, models_list_payload
 from generation.slide_pipeline import run_brand_slide_generation
 from logging_config import configure_logging
 from gallery_local_store import (
@@ -75,10 +76,7 @@ OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "").strip()
 IMAGE_TTL_HOURS: int = int(os.getenv("IMAGE_TTL_HOURS", "24"))
 PUBLIC_BASE_URL: str = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 
-ALLOWED_MODEL_IDS: tuple[str, ...] = (
-    "gemini-3-pro-image-preview",
-    "gemini-2.5-flash-image",
-)
+ALLOWED_MODEL_IDS: tuple[str, ...] = ALLOWED_IMAGE_MODEL_IDS
 
 ALLOWED_ASPECT_RATIOS: tuple[str, ...] = (
     "1:1",
@@ -94,15 +92,6 @@ ALLOWED_ASPECT_RATIOS: tuple[str, ...] = (
 )
 
 ALLOWED_IMAGE_SIZES: tuple[str, ...] = ("1K", "2K", "4K")
-
-GEMINI_IMAGE_PRICE_TABLE_USD: dict[str, Any] = {
-    "gemini-2.5-flash-image": 0.039,
-    "gemini-3-pro-image-preview": {
-        "1K": 0.134,
-        "2K": 0.134,
-        "4K": 0.24,
-    },
-}
 
 
 def _public_api_origin(request: Request) -> str:
@@ -143,7 +132,7 @@ async def _application_lifespan(app: FastAPI):
 app = FastAPI(
     title="Rankify — Multi-brand image API",
     version="3.0.0",
-    description="Brand-scoped configuration, Gemini slide generation, and per-brand galleries.",
+    description="Brand-scoped configuration, Gemini and OpenAI image generation, and per-brand galleries.",
     lifespan=_application_lifespan,
 )
 
@@ -290,7 +279,7 @@ class GalleryImageEditRequest(BaseModel):
     instruction: str = Field(..., min_length=3, max_length=2000, description="What to change; everything else should stay as-is.")
     model_name: str = Field(
         default="gemini-2.5-flash-image",
-        description="Image-capable Gemini model. Flash is recommended for fast local edits.",
+        description="Gemini model id or OpenAI namespaced id (e.g. openai:gpt-image-2). Flash is a fast default for edits.",
     )
     aspect_ratio: str = Field(default="1:1")
     image_size: Optional[str] = Field(
@@ -589,19 +578,8 @@ async def brand_text_hashtags(brand_id: str, body: BrandStudioSocialCopyRequest)
     "/api/models",
     dependencies=[Depends(require_rankify_api_key)],
 )
-async def list_supported_gemini_image_models() -> dict:
-    models: list[dict] = []
-    for model_id in ALLOWED_MODEL_IDS:
-        price = GEMINI_IMAGE_PRICE_TABLE_USD.get(model_id)
-        if isinstance(price, dict):
-            models.append(
-                {"model_name": model_id, "supports_image_size": True, "pricing": price}
-            )
-        else:
-            models.append(
-                {"model_name": model_id, "supports_image_size": False, "price_per_image_usd": price}
-            )
-    return {"models": models}
+async def list_supported_image_models() -> dict:
+    return {"models": models_list_payload()}
 
 
 @app.get(
@@ -611,7 +589,7 @@ async def list_supported_gemini_image_models() -> dict:
 async def list_supported_image_sizes_and_ratios() -> dict:
     return {
         "image_sizes": list(ALLOWED_IMAGE_SIZES),
-        "note": "Image size applies only to gemini-3-pro-image-preview.",
+        "note": "Image size applies to gemini-3-pro-image-preview and OpenAI gpt-image-1 / gpt-image-2 models.",
         "aspect_ratios": list(ALLOWED_ASPECT_RATIOS),
     }
 
@@ -658,12 +636,12 @@ async def generate_brand_slides_from_json(
         logo_override=None,
         logo_fallback_path=DEFAULT_LOGO_PATH,
         google_api_key=GOOGLE_API_KEY,
+        openai_api_key=OPENAI_API_KEY,
         public_origin=_public_api_origin(request),
         signing_secret=API_KEY,
         allowed_models=ALLOWED_MODEL_IDS,
         allowed_ratios=ALLOWED_ASPECT_RATIOS,
         allowed_sizes=ALLOWED_IMAGE_SIZES,
-        price_table=GEMINI_IMAGE_PRICE_TABLE_USD,
     )
     logger.info(
         "Generate JSON complete brand_id=%s images=%s total_usd=%s",
@@ -711,12 +689,12 @@ async def generate_brand_slides_from_multipart(
             logo_override=logo_override,
             logo_fallback_path=DEFAULT_LOGO_PATH,
             google_api_key=GOOGLE_API_KEY,
+            openai_api_key=OPENAI_API_KEY,
             public_origin=_public_api_origin(request),
             signing_secret=API_KEY,
             allowed_models=ALLOWED_MODEL_IDS,
             allowed_ratios=ALLOWED_ASPECT_RATIOS,
             allowed_sizes=ALLOWED_IMAGE_SIZES,
-            price_table=GEMINI_IMAGE_PRICE_TABLE_USD,
         )
     finally:
         if logo_override is not None:
@@ -771,8 +749,8 @@ async def edit_brand_gallery_image(
     body: GalleryImageEditRequest,
 ) -> BrandSlideGenerateResponse:
     """
-    Loads ``source_filename`` from the brand gallery, sends it to Gemini with strict preservation prompts,
-    and writes a new ``rankify_edit_*.png`` file.
+    Loads ``source_filename`` from the brand gallery, sends it to the selected image model (Gemini or OpenAI)
+    with strict preservation prompts, and writes a new ``rankify_edit_*.png`` file.
     """
     cfg = _load_brand_or_404(brand_id)
     logger.info(
@@ -791,12 +769,12 @@ async def edit_brand_gallery_image(
         aspect_ratio=body.aspect_ratio,
         image_size=body.image_size or "2K",
         google_api_key=GOOGLE_API_KEY,
+        openai_api_key=OPENAI_API_KEY,
         public_origin=_public_api_origin(request),
         signing_secret=API_KEY,
         allowed_models=ALLOWED_MODEL_IDS,
         allowed_ratios=ALLOWED_ASPECT_RATIOS,
         allowed_sizes=ALLOWED_IMAGE_SIZES,
-        price_table=GEMINI_IMAGE_PRICE_TABLE_USD,
     )
     return BrandSlideGenerateResponse.model_validate(raw)
 
