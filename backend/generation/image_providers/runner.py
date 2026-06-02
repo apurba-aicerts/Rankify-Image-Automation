@@ -1,4 +1,4 @@
-"""Dispatch slide generate / gallery edit to Gemini or OpenAI."""
+"""Dispatch slide generate / gallery edit to Gemini, OpenAI, or Imagen."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from PIL import Image
 
 from generation.image_providers import gemini_provider, openai_provider
+from generation.image_providers.registry import provider_for_model
 from generation.image_providers.registry import (
     model_supports_image_size,
     normalize_model_id,
@@ -23,7 +24,7 @@ def _check_api_keys(
     if requires_google_api_key(model_id) and not google_api_key:
         raise HTTPException(
             status_code=500,
-            detail="GOOGLE_API_KEY is not configured on the server (required for Gemini image models).",
+            detail="GOOGLE_API_KEY is not configured on the server (required for Google image models).",
         )
     if requires_openai_api_key(model_id) and not openai_api_key:
         raise HTTPException(
@@ -60,16 +61,18 @@ def generate_slide_to_file(
             aspect_ratio=aspect_ratio,
             image_size=gemini_size,
         )
-    return openai_provider.generate_brand_slide_to_file(
-        openai_api_key=openai_api_key,
-        api_model=api_model,
-        brand_governance_prompt=brand_governance_prompt,
-        slide_user_prompt=slide_user_prompt,
-        logo=logo,
-        output_file_path=output_file_path,
-        aspect_ratio=aspect_ratio,
-        image_size=openai_size,
-    )
+    if provider == "openai":
+        return openai_provider.generate_brand_slide_to_file(
+            openai_api_key=openai_api_key,
+            api_model=api_model,
+            brand_governance_prompt=brand_governance_prompt,
+            slide_user_prompt=slide_user_prompt,
+            logo=logo,
+            output_file_path=output_file_path,
+            aspect_ratio=aspect_ratio,
+            image_size=openai_size,
+        )
+    raise HTTPException(status_code=400, detail=f"Model provider not supported for generate: {provider_for_model(model_id)}")
 
 
 def edit_image_to_file(
@@ -100,13 +103,15 @@ def edit_image_to_file(
             aspect_ratio=aspect_ratio,
             image_size=gemini_size,
         )
-    return openai_provider.edit_image_to_file(
-        openai_api_key=openai_api_key,
-        api_model=api_model,
-        edit_system_prompt=edit_system_prompt,
-        edit_user_prompt=edit_user_prompt,
-        base_image=base_image,
-        output_file_path=output_file_path,
-        aspect_ratio=aspect_ratio,
-        image_size=openai_size,
-    )
+    if provider == "openai":
+        return openai_provider.edit_image_to_file(
+            openai_api_key=openai_api_key,
+            api_model=api_model,
+            edit_system_prompt=edit_system_prompt,
+            edit_user_prompt=edit_user_prompt,
+            base_image=base_image,
+            output_file_path=output_file_path,
+            aspect_ratio=aspect_ratio,
+            image_size=openai_size,
+        )
+    raise HTTPException(status_code=400, detail=f"Model provider not supported for edit: {provider_for_model(model_id)}")

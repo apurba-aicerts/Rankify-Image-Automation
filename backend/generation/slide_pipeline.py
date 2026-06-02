@@ -18,7 +18,7 @@ from brands.schemas import BrandConfiguration
 from gallery_url_signing import GALLERY_IMAGE_URL_TTL_SECONDS, build_brand_gallery_image_view_url
 from generation.generation_audit import write_generation_audit_file
 from generation.image_providers import ImageProviderNoOutput, estimate_price_usd, generate_slide_to_file
-from generation.image_providers.registry import model_supports_image_size
+from generation.image_providers.registry import model_supports_image_size, normalize_model_id
 from generation.prompt_builder import build_governance_system_prompt, build_slide_user_prompt
 from gallery_local_store import (
     commit_temp_file_to_gallery,
@@ -139,6 +139,156 @@ def run_brand_slide_generation(
         model_id,
         aspect_ratio,
     )
+
+    provider, api_model = normalize_model_id(model_id)
+
+    def _commit_one(index: int, temp_png_path: str) -> tuple[str, int]:
+        filename_local = f"rankify_slide_{batch_id}_{index}.png"
+        commit_temp_file_to_gallery(brand_id, temp_png_path, filename_local)
+        sz = resolved_gallery_file_path(brand_id, filename_local).stat().st_size
+        return filename_local, sz
+
+    # OpenAI supports multi-image in one request via n (logo reference via images.edit).
+    if provider == "openai" and slide_count > 1:
+        from generation.image_providers.openai_provider import generate_brand_slides_b64
+        import base64
+        from io import BytesIO
+
+        b64_list = generate_brand_slides_b64(
+            openai_api_key=openai_api_key,
+            api_model=api_model,
+            brand_governance_prompt=governance,
+            slide_user_prompt=slide_user,
+            logo=logo_image,
+            aspect_ratio=aspect_ratio,
+            image_size=image_size,
+            n=slide_count,
+        )
+
+        for index, b64_img in enumerate(b64_list[:slide_count], start=1):
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                temp_png_path = tmp.name
+            try:
+                img = Image.open(BytesIO(base64.b64decode(b64_img)))
+                img.save(temp_png_path)
+                filename, file_size = _commit_one(index, temp_png_path)
+                logger.info(
+                    "Slide %s/%s written brand_id=%s file=%s bytes=%s (openai batch)",
+                    index,
+                    slide_count,
+                    brand_id,
+                    filename,
+                    file_size,
+                )
+            finally:
+                if os.path.isfile(temp_png_path):
+                    try:
+                        os.unlink(temp_png_path)
+                    except OSError:
+                        pass
+
+            now = datetime.now(timezone.utc)
+            view_url = build_brand_gallery_image_view_url(
+                public_api_origin=public_origin,
+                signing_secret=signing_secret,
+                brand_id=brand_id,
+                filename=filename,
+                ttl_seconds=GALLERY_IMAGE_URL_TTL_SECONDS,
+            )
+            images_out.append(
+                {
+                    "filename": filename,
+                    "url": view_url,
+                    "storage_path": logical_gallery_key(brand_id, filename),
+                    "size_bytes": file_size,
+                    "created_at": now.isoformat(),
+                    "age_hours": 0.0,
+                }
+            )
+        per_image = estimate_price_usd(model_id, image_size)
+        total = round(per_image * slide_count, 3)
+        logger.info(
+            "Slide generation finished brand_id=%s batch=%s images=%s total_usd=%s",
+            brand_id,
+            batch_id,
+            len(images_out),
+            total,
+        )
+        return {
+            "images": images_out,
+            "model_used": model_id,
+            "per_image_price_usd": per_image,
+            "total_price_usd": total,
+            "message": f"Successfully generated {len(images_out)} slide(s) for brand '{brand_id}'.",
+            "generation_audit_path": audit_path_str,
+        }
+
+    # Imagen 4 supports multi-image in one request via number_of_images (max 4).
+    if provider == "imagen":
+        from generation.image_providers.imagen_provider import ensure_png_bytes, generate_images_bytes
+
+        remaining = slide_count
+        index = 1
+        while remaining > 0:
+            chunk = 4 if remaining > 4 else remaining
+            imgs = generate_images_bytes(
+                google_api_key=google_api_key,
+                model=api_model,
+                prompt=slide_user,
+                aspect_ratio=aspect_ratio,
+                number_of_images=chunk,
+            )
+            for b in imgs:
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                    temp_png_path = tmp.name
+                try:
+                    Path(temp_png_path).write_bytes(ensure_png_bytes(b))
+                    filename, file_size = _commit_one(index, temp_png_path)
+                finally:
+                    if os.path.isfile(temp_png_path):
+                        try:
+                            os.unlink(temp_png_path)
+                        except OSError:
+                            pass
+
+                now = datetime.now(timezone.utc)
+                view_url = build_brand_gallery_image_view_url(
+                    public_api_origin=public_origin,
+                    signing_secret=signing_secret,
+                    brand_id=brand_id,
+                    filename=filename,
+                    ttl_seconds=GALLERY_IMAGE_URL_TTL_SECONDS,
+                )
+                images_out.append(
+                    {
+                        "filename": filename,
+                        "url": view_url,
+                        "storage_path": logical_gallery_key(brand_id, filename),
+                        "size_bytes": file_size,
+                        "created_at": now.isoformat(),
+                        "age_hours": 0.0,
+                    }
+                )
+                index += 1
+            remaining -= chunk
+
+        per_image = estimate_price_usd(model_id, image_size)
+        total = round(per_image * slide_count, 3)
+        logger.info(
+            "Slide generation finished brand_id=%s batch=%s images=%s total_usd=%s",
+            brand_id,
+            batch_id,
+            len(images_out),
+            total,
+        )
+        return {
+            "images": images_out,
+            "model_used": model_id,
+            "per_image_price_usd": per_image,
+            "total_price_usd": total,
+            "message": f"Successfully generated {len(images_out)} slide(s) for brand '{brand_id}'.",
+            "generation_audit_path": audit_path_str,
+        }
 
     for index in range(1, slide_count + 1):
         filename = f"rankify_slide_{batch_id}_{index}.png"

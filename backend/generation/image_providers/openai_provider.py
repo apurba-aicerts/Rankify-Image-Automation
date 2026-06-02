@@ -138,6 +138,69 @@ def generate_brand_slide_to_file(
     return output_file_path
 
 
+def generate_brand_slides_b64(
+    *,
+    openai_api_key: str,
+    api_model: str,
+    brand_governance_prompt: str,
+    slide_user_prompt: str,
+    logo: Image.Image,
+    aspect_ratio: str,
+    image_size: str,
+    n: int,
+) -> list[str]:
+    """Generate N branded slides in one Images API request (logo as reference)."""
+    if n < 1:
+        raise ValueError("n must be >= 1")
+    if n > 10:
+        raise ValueError("OpenAI image batch n must be <= 10")
+
+    client = OpenAI(api_key=openai_api_key)
+    combined = (
+        f"{brand_governance_prompt.strip()}\n\n"
+        f"---\n\n"
+        f"{slide_user_prompt.strip()}\n\n"
+        "Use the attached brand logo faithfully in the slide layout. "
+        "Output one complete social/marketing slide image per result."
+    )
+    logo_bytes = _pil_to_png_bytes(logo)
+    kwargs = _build_edit_kwargs(
+        api_model=api_model,
+        prompt=combined,
+        image_bytes_list=[logo_bytes],
+        image_filenames=["brand_logo.png"],
+        aspect_ratio=aspect_ratio,
+        image_size=image_size,
+    )
+    kwargs["n"] = n
+
+    logger.info(
+        "OpenAI images.edit (slide batch) model=%s size=%s aspect=%s n=%s",
+        api_model,
+        kwargs["size"],
+        aspect_ratio,
+        n,
+    )
+    try:
+        result = client.images.edit(**kwargs)
+    except Exception as exc:
+        logger.exception("OpenAI slide batch failed model=%s n=%s", api_model, n)
+        raise RuntimeError(f"OpenAI image generation failed: {exc}") from exc
+
+    data = result.data or []
+    if not data:
+        raise ImageProviderNoOutput("OpenAI returned no images in response.", provider="openai")
+
+    out: list[str] = []
+    for item in data:
+        b64 = getattr(item, "b64_json", None)
+        if b64:
+            out.append(b64)
+    if not out:
+        raise ImageProviderNoOutput("OpenAI returned no b64_json images.", provider="openai")
+    return out
+
+
 def edit_image_to_file(
     *,
     openai_api_key: str,

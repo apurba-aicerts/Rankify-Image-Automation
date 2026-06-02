@@ -53,6 +53,7 @@ export function CreativeStudioPage() {
   const [modelName, setModelName] = useState("gemini-3-pro-image-preview");
   const [aspectRatio, setAspectRatio] = useState("1:1");
   const [imageSize, setImageSize] = useState("2K");
+  const [numImages, setNumImages] = useState(1);
 
   const [campaignGoal, setCampaignGoal] = useState("brand_awareness");
   const [voiceToneId, setVoiceToneId] = useState("professional");
@@ -237,7 +238,7 @@ export function CreativeStudioPage() {
           intent,
         }),
         model_name: modelName,
-        num_images: 1,
+        num_images: numImages,
         aspect_ratio: aspectRatio,
         image_size: modelSupportsImageSize(modelCatalog, modelName) ? imageSize : undefined,
       };
@@ -246,13 +247,23 @@ export function CreativeStudioPage() {
       const primaryFn = data.images?.[0]?.filename ?? null;
       setActiveSourceFilename(primaryFn);
       await fetchAndApplySocialCopy(primaryFn);
-      const url = data.images?.[0]?.url;
-      if (url) {
-        setArtifactHistory((h) =>
-          [{ id: `gen-${Date.now()}`, url, filename: primaryFn }, ...h].slice(0, 16),
-        );
+      const images = data.images || [];
+      if (images.length) {
+        setArtifactHistory((h) => {
+          const next = [
+            ...images
+              .map((img, idx) => ({
+                id: `gen-${Date.now()}-${idx}`,
+                url: img.url,
+                filename: img.filename,
+              }))
+              .filter((x) => x.url),
+            ...h,
+          ];
+          return next.slice(0, 16);
+        });
       }
-      showToast("Visual generated.");
+      showToast(images.length > 1 ? `Generated ${images.length} variants.` : "Visual generated.");
     } catch (e) {
       showToast(e.message || String(e), "error");
     } finally {
@@ -466,6 +477,16 @@ export function CreativeStudioPage() {
                 {modelCatalog.map((m) => (
                   <option key={m.model_name} value={m.model_name}>
                     {modelOptionLabel(m)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="os-inline">
+              <span className="os-label">Variants</span>
+              <select className="os-select" value={numImages} onChange={(e) => setNumImages(Number(e.target.value))}>
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
+                  <option key={n} value={n}>
+                    {n}
                   </option>
                 ))}
               </select>
