@@ -7,7 +7,7 @@ Layout::
       <brand_id>/
         brand.json      # BrandConfiguration
         assets/
-          logo.png      # optional; uploaded via API
+          logo.png      # required on create; replace via API
 
 ``BRAND_DATA_DIR`` defaults to ``data/brands`` under the process cwd (``backend/`` when running uvicorn).
 """

@@ -63,6 +63,11 @@ def _refresh_logo_cache(brand_id: str, source_path: str) -> None:
     shutil.copy2(source_path, dest)
 
 
+def brand_has_logo(brand_id: str, configured_filename: str) -> bool:
+    """True when the brand has a persisted logo asset (local disk or S3 + DB)."""
+    return resolve_logo_local_path(brand_id, configured_filename) is not None
+
+
 def resolve_logo_local_path(brand_id: str, configured_filename: str) -> Path | None:
     """Local path for PIL/open; None if no logo configured."""
     from brands.repository import BrandRepository

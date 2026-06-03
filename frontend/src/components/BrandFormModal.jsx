@@ -27,6 +27,33 @@ async function uploadLogoFile({ apiBase, apiKey, brandId, file }) {
   if (!res.ok) throw new Error(text || res.statusText);
 }
 
+async function createBrandWithLogo({ apiBase, apiKey, payload, file }) {
+  const base = apiBase.replace(/\/+$/, "");
+  const fd = new FormData();
+  fd.append("payload", JSON.stringify(payload));
+  fd.append("logo", file);
+  const res = await fetch(`${base}/api/brands`, {
+    method: "POST",
+    headers: { "x-api-key": apiKey },
+    body: fd,
+  });
+  const text = await res.text();
+  let data = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = text;
+  }
+  if (!res.ok) {
+    const msg =
+      data && typeof data === "object" && "detail" in data
+        ? JSON.stringify(data.detail)
+        : text || res.statusText;
+    throw new Error(`${res.status}: ${msg}`);
+  }
+  return data;
+}
+
 export function BrandFormModal({ open, mode, brandId, onClose, onSaved }) {
   const { client, showToast, loadBrands, apiBase, apiKey } = useApp();
   const [step, setStep] = useState(0);
@@ -98,6 +125,14 @@ export function BrandFormModal({ open, mode, brandId, onClose, onSaved }) {
   const last = step === steps.length - 1;
 
   async function save() {
+    if (mode === "create" && !logoFile) {
+      showToast("Brand logo is required. Upload a PNG, JPEG, or WebP at the top of this window.", "error");
+      return;
+    }
+    if (mode === "create" && !apiKey) {
+      showToast("Configure your API key in Settings before creating a brand.", "error");
+      return;
+    }
     setBusy(true);
     try {
       const formForPayload =
@@ -109,12 +144,8 @@ export function BrandFormModal({ open, mode, brandId, onClose, onSaved }) {
           : form;
       const payload = buildBrandCreatePayload(formForPayload);
       if (mode === "create") {
-        await client.request("/api/brands", { method: "POST", json: payload });
-        const id = payload.brand_id;
-        if (logoFile && apiKey) {
-          await uploadLogoFile({ apiBase, apiKey, brandId: id, file: logoFile });
-        }
-        showToast(`Brand “${payload.display_name || id}” created.`);
+        await createBrandWithLogo({ apiBase, apiKey, payload, file: logoFile });
+        showToast(`Brand “${payload.display_name || payload.brand_id}” created.`);
       } else if (mode === "edit" && brandId) {
         const body = buildBrandPutConfiguration(form);
         if (body.brand_id !== brandId) {
@@ -160,7 +191,12 @@ export function BrandFormModal({ open, mode, brandId, onClose, onSaved }) {
           </button>
         )}
         {last && (
-          <button type="button" className="btn btn-primary" onClick={save} disabled={busy || loading || aiBusy}>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={save}
+            disabled={busy || loading || aiBusy || (mode === "create" && !logoFile)}
+          >
             {busy ? "Saving…" : mode === "create" ? "Create brand" : "Save changes"}
           </button>
         )}
@@ -187,14 +223,21 @@ export function BrandFormModal({ open, mode, brandId, onClose, onSaved }) {
             className="os-dropzone-input"
             onChange={(e) => setLogoFile(e.target.files?.[0] || null)}
             disabled={loading}
+            required={mode === "create"}
           />
           <span className="os-dropzone-text">
             {logoFile
               ? `Selected: ${logoFile.name}`
-              : "Upload brand logo (PNG, JPEG, WebP) — optional"}
+              : mode === "create"
+                ? "Upload brand logo (PNG, JPEG, WebP) — required"
+                : "Upload brand logo (PNG, JPEG, WebP) — optional replacement"}
           </span>
         </label>
-        <small className="field-hint brand-modal-logo-hint">Uploaded when you save this brand.</small>
+        <small className="field-hint brand-modal-logo-hint">
+          {mode === "create"
+            ? "A logo is required to create a brand. It is saved when you finish the wizard."
+            : "Leave empty to keep the current logo; choose a file to replace it on save."}
+        </small>
       </div>
 
       {mode === "create" && (
@@ -243,8 +286,8 @@ export function BrandFormModal({ open, mode, brandId, onClose, onSaved }) {
               <li>Review each step yourself — AI suggestions can be wrong or incomplete.</li>
               <li>When everything looks right, go to the last step and save your brand.</li>
               <li>
-                Don&apos;t forget to <strong>upload your logo</strong> at the top of this window if you want it on your
-                creatives{logoFile ? " (you already picked a file — it will upload when you save)." : "."}
+                <strong>Upload your logo</strong> at the top of this window before you save — it is required for new
+                brands{logoFile ? " (you already picked a file)." : "."}
               </li>
             </ul>
             <button type="button" className="btn btn-ghost btn-sm ai-onboard-notice__dismiss" onClick={() => setAiOnboardNoticeVisible(false)}>

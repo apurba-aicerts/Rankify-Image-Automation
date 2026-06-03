@@ -13,7 +13,7 @@ Vite + React app to exercise the backend: connect to an API, bootstrap a demo br
 
 ```bash
 cd backend
-uvicorn main:app --host 0.0.0.0 --port 9600
+uvicorn main:app --host 0.0.0.0 --port 8750
 ```
 
 **2. Frontend** (this folder):
@@ -24,11 +24,11 @@ npm install
 npm run dev
 ```
 
-Open the URL Vite prints (usually **http://localhost:5173**).
+Open the URL Vite prints (usually **http://localhost:8760**).
 
 **3. In the UI**
 
-1. Set **API base URL** (e.g. `http://localhost:9600`) and **x-api-key** (must match `API_KEY` in `backend/.env`).
+1. Set **API base URL** (e.g. `http://localhost:8750`) and **x-api-key** (must match `API_KEY` in `backend/.env`).
 2. Click **Save to browser** (stores in `localStorage` on this machine only).
 3. **POST /api/brands/bootstrap-demo** once to create `demo-ai-certs`.
 4. Adjust **Brand ID** if needed (default `demo-ai-certs`).
@@ -51,7 +51,7 @@ From the **repository root** (see root `README.md`):
 docker compose up --build
 ```
 
-Open **http://localhost:5173**. The container nginx proxies `/api` and `/health` to the `backend` service. Set **x-api-key** in Settings to match `backend/.env` `API_KEY`; leave API base URL empty.
+Open **http://localhost:8760**. The container nginx proxies `/api` and `/health` to the `backend` service. Set **x-api-key** in Settings to match `backend/.env` `API_KEY`; leave API base URL empty.
 
 Build the image alone:
 

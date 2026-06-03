@@ -59,7 +59,7 @@ export function SettingsModal({ open, onClose }) {
       <p className="help">
         <code>x-api-key</code> must match <code>API_KEY</code> in <code>backend/.env</code>. In local dev, leave{" "}
         <strong>API base URL</strong> empty so requests use the Vite proxy to your API (default{" "}
-        <code>http://127.0.0.1:9600</code>). Set a full URL only if the API is not behind the dev proxy.
+        <code>http://127.0.0.1:8750</code>). Set a full URL only if the API is not behind the dev proxy.
       </p>
       <label className="field">
         API base URL

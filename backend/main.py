@@ -3,7 +3,7 @@ Rankify HTTP API — multi-brand FastAPI application.
 
 Run::
 
-    uvicorn main:app --host 0.0.0.0 --port 9600
+    uvicorn main:app --host 0.0.0.0 --port 8750
 
 Brand configuration lives under ``data/brands/``; generated images under ``generated-images/<brand_id>/``.
 """
@@ -336,6 +336,22 @@ def _http_media_type_for_image_filename(filename: str) -> str:
     return "application/octet-stream"
 
 
+_ALLOWED_LOGO_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp")
+
+
+def _logo_suffix_from_upload(file: UploadFile) -> str:
+    suffix = Path(file.filename or "logo").suffix.lower()
+    if suffix not in _ALLOWED_LOGO_SUFFIXES:
+        raise HTTPException(status_code=400, detail="Logo must be png, jpg, or webp.")
+    return suffix
+
+
+async def _spool_upload_to_temp(file: UploadFile, suffix: str) -> str:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(await file.read())
+        return tmp.name
+
+
 def _load_brand_or_404(brand_id: str) -> BrandConfiguration:
     repo = get_brand_repository()
     try:
@@ -442,15 +458,50 @@ async def list_brands() -> dict:
 @app.post(
     "/api/brands",
     dependencies=[Depends(require_rankify_api_key)],
-    summary="Onboard a new brand",
+    summary="Onboard a new brand (multipart: payload JSON + required logo file)",
 )
-async def create_brand(payload: BrandCreatePayload) -> BrandConfiguration:
+async def create_brand(
+    payload: str = Form(..., description="JSON-serialized BrandCreatePayload"),
+    logo: UploadFile = File(..., description="Brand logo image (required)"),
+) -> BrandConfiguration:
+    from pydantic import ValidationError
+
+    try:
+        body = BrandCreatePayload.model_validate_json(payload)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors()) from exc
+
     repo = get_brand_repository()
-    if repo.exists(payload.brand_id):
+    if repo.exists(body.brand_id):
         raise HTTPException(status_code=409, detail="brand_id already exists.")
-    cfg = payload.to_configuration()
-    repo.save(cfg)
-    logger.info("Brand created brand_id=%s display_name=%s", cfg.brand_id, cfg.display_name)
+
+    cfg = body.to_configuration()
+    brand_id = cfg.brand_id
+    suffix = _logo_suffix_from_upload(logo)
+    tmp_path = await _spool_upload_to_temp(logo, suffix)
+    try:
+        repo.save(cfg)
+        save_logo_upload(
+            brand_id=brand_id,
+            temp_path=tmp_path,
+            filename=cfg.logo_asset_filename,
+            content_type=_http_media_type_for_image_filename(f"x{suffix}"),
+        )
+    except HTTPException:
+        if repo.exists(brand_id):
+            repo.delete(brand_id)
+        raise
+    except Exception as exc:
+        if repo.exists(brand_id):
+            repo.delete(brand_id)
+        raise HTTPException(status_code=500, detail=f"Logo upload failed: {exc}") from exc
+    finally:
+        try:
+            if os.path.isfile(tmp_path):
+                os.unlink(tmp_path)
+        except OSError:
+            pass
+    logger.info("Brand created brand_id=%s display_name=%s (with logo)", brand_id, cfg.display_name)
     return cfg
 
 
@@ -555,13 +606,9 @@ async def upload_brand_logo(
 ) -> dict:
     cfg = _load_brand_or_404(brand_id)
     get_brand_repository().ensure_layout(brand_id)
-    suffix = Path(file.filename or "logo").suffix.lower()
-    if suffix not in (".png", ".jpg", ".jpeg", ".webp"):
-        raise HTTPException(status_code=400, detail="Logo must be png, jpg, or webp.")
+    suffix = _logo_suffix_from_upload(file)
     content_type = _http_media_type_for_image_filename(f"x{suffix}")
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        tmp.write(await file.read())
-        tmp_path = tmp.name
+    tmp_path = await _spool_upload_to_temp(file, suffix)
     try:
         stored = save_logo_upload(
             brand_id=brand_id,

@@ -107,7 +107,7 @@ def main() -> int:
             image_size="2K",
             google_api_key=os.getenv("GOOGLE_API_KEY", ""),
             openai_api_key=api_key,
-            public_origin="http://127.0.0.1:9600",
+            public_origin="http://127.0.0.1:8750",
             signing_secret=os.getenv("API_KEY", "test"),
             allowed_models=(args.model,),
             allowed_ratios=("1:1", "16:9", "9:16"),

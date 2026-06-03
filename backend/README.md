@@ -130,11 +130,11 @@ From **repository root**:
 ```bash
 cd backend
 pip install -r requirements.txt
-uvicorn main:app --host 0.0.0.0 --port 9600
+uvicorn main:app --host 0.0.0.0 --port 8750
 ```
 
-- API base: `http://localhost:9600`
-- Open **Swagger:** `http://localhost:9600/docs`
+- API base: `http://localhost:8750`
+- Open **Swagger:** `http://localhost:8750/docs`
 - If you previously kept `.env` at the **repo root**, copy it here: `backend/.env` (the server is started with cwd `backend/`).
 
 ### B. HTTP API — Docker
@@ -146,13 +146,13 @@ cp .env.example .env   # if needed
 docker compose up --build
 ```
 
-API on **http://localhost:9600**; UI on **http://localhost:5173**. Compose sets `DATABASE_URL` to the `postgres` service and mounts volumes for `generated-images/` and `data/`.
+API on **http://localhost:8750**; UI on **http://localhost:8760**. Compose sets `DATABASE_URL` to the `postgres` service and mounts volumes for `generated-images/` and `data/`.
 
 **API image only** (build context must be `backend/`):
 
 ```bash
 docker build -f backend/Dockerfile -t rankify-image-api ./backend
-docker run --env-file backend/.env -p 9600:9600 rankify-image-api
+docker run --env-file backend/.env -p 8750:8750 rankify-image-api
 ```
 
 **Postgres only** (local dev):
@@ -174,7 +174,7 @@ streamlit run streamlit_slide_lab.py
 ### D. Smoke test the API
 
 ```bash
-curl -s http://localhost:9600/health
+curl -s http://localhost:8750/health
 ```
 
 ---
@@ -307,7 +307,7 @@ DELETE /api/brands/{brand_id}
 POST /api/brands/{brand_id}/assets/logo   (multipart file)
 ```
 
-`POST /api/brands` accepts a JSON body matching **`BrandCreatePayload`**: required `brand_id` (slug), `display_name`, and nested `generation.governance_prompt_template` (long system prompt). Optional sections cover colors, typography, voice, social defaults, platform hints, content themes, and text preferences (used when caption/hashtag pipelines exist).
+`POST /api/brands` requires **multipart/form-data** with **`payload`** (JSON string matching **`BrandCreatePayload`**) and **`logo`** (PNG/JPG/WebP image file). Required fields in the payload include `brand_id` (slug), `display_name`, and nested `generation.governance_prompt_template`. Optional sections cover colors, typography, voice, social defaults, platform hints, content themes, and text preferences. Use `POST /api/brands/{brand_id}/assets/logo` to replace the logo on an existing brand.
 
 `POST /api/brands/ai-draft` accepts **`BrandAiDraftRequest`**: `brand_materials` (long unstructured paste), optional `brand_id` (if omitted the server assigns a UUID slug), and optional `model_name` (default `gpt-4o-2024-08-06`). Requires **`OPENAI_API_KEY`** in the server environment. Returns **`BrandAiDraftResponse`** with a validated `draft` object — same shape as `POST /api/brands` — for human review before create.
 
@@ -342,7 +342,7 @@ Uses the **saved brand configuration** and logo (`data/brands/<brand_id>/assets/
 | `model_name` / `num_images` / `aspect_ratio` / `image_size` | no | Same semantics as before. |
 
 **Response `url` example:**  
-`http://localhost:9600/api/brands/demo-ai-certs/gallery/raw/rankify_slide_....png?exp=...&sig=...`
+`http://localhost:8750/api/brands/demo-ai-certs/gallery/raw/rankify_slide_....png?exp=...&sig=...`
 
 **Signature:** HMAC-SHA256 over `brand_id:filename:exp` with `API_KEY`.
 
@@ -384,8 +384,8 @@ DELETE /api/brands/{brand_id}/gallery/{filename}
 
 Once the server is running, visit:
 
-- **Swagger UI:** [http://localhost:9600/docs](http://localhost:9600/docs)
-- **ReDoc:** [http://localhost:9600/redoc](http://localhost:9600/redoc)
+- **Swagger UI:** [http://localhost:8750/docs](http://localhost:8750/docs)
+- **ReDoc:** [http://localhost:8750/redoc](http://localhost:8750/redoc)
 
 ---
 

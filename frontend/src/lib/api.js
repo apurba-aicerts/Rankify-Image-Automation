@@ -16,7 +16,7 @@ function defaultApiBase() {
   const fromEnv = envApiBase();
   if (fromEnv) return fromEnv;
   if (import.meta.env?.DEV || import.meta.env?.VITE_USE_PROXY === "true") return "";
-  return "http://localhost:9600";
+  return "http://localhost:8750";
 }
 
 export function loadStoredSettings() {
@@ -69,7 +69,7 @@ export function createApiClient({ apiBase, apiKey }) {
     } catch (e) {
       const devProxy = import.meta.env?.DEV && !base;
       const hint = devProxy
-        ? " Is the FastAPI server running (e.g. uvicorn on :9600)? The dev app proxies /api to it."
+        ? " Is the FastAPI server running (e.g. uvicorn on :8750)? The dev app proxies /api to it."
         : import.meta.env?.DEV && base.startsWith("http")
           ? " Tip: in dev, clear API base (empty = Vite proxy) or fix the URL."
           : " Check that the API server is running and Settings → API base URL is correct.";

@@ -41,7 +41,7 @@ AWS_REGION=us-east-1
 
 ```bash
 cd backend
-uvicorn main:app --host 0.0.0.0 --port 9600
+uvicorn main:app --host 0.0.0.0 --port 8750
 ```
 
 `GET /health` reports database and S3 connectivity when configured.
