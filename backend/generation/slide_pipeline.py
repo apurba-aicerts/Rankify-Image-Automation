@@ -13,18 +13,15 @@ from typing import Any, Optional
 from fastapi import HTTPException
 from PIL import Image
 
-from brands.repository import BrandRepository
+from brands.repository_factory import get_brand_repository
 from brands.schemas import BrandConfiguration
-from gallery_url_signing import GALLERY_IMAGE_URL_TTL_SECONDS, build_brand_gallery_image_view_url
 from generation.generation_audit import write_generation_audit_file
 from generation.image_providers import ImageProviderNoOutput, estimate_price_usd, generate_slide_to_file
 from generation.image_providers.registry import model_supports_image_size, normalize_model_id
 from generation.prompt_builder import build_governance_system_prompt, build_slide_user_prompt
-from gallery_local_store import (
-    commit_temp_file_to_gallery,
-    logical_gallery_key,
-    resolved_gallery_file_path,
-)
+from gallery_local_store import logical_gallery_key
+from services.brand_assets import resolve_logo_local_path
+from services.gallery_service import build_gallery_view_url, commit_generated_image
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +74,7 @@ def run_brand_slide_generation(
 
     batch_id = uuid.uuid4().hex[:8]
 
-    repo = BrandRepository()
+    repo = get_brand_repository()
     governance = build_governance_system_prompt(config)
     # INFO: short line only (full prompt is huge and is easy to "lose" in the terminal).
     logger.info(
@@ -102,8 +99,8 @@ def run_brand_slide_generation(
         logo_image = logo_override
         logo_description = "multipart logo override (this request only)"
     else:
-        logo_path = repo.logo_path(brand_id)
-        if logo_path.is_file():
+        logo_path = resolve_logo_local_path(brand_id, config.logo_asset_filename)
+        if logo_path is not None and logo_path.is_file():
             logo_image = Image.open(logo_path)
             logo_description = f"brand logo file: {logo_path.resolve()}"
         else:
@@ -144,9 +141,23 @@ def run_brand_slide_generation(
 
     def _commit_one(index: int, temp_png_path: str) -> tuple[str, int]:
         filename_local = f"rankify_slide_{batch_id}_{index}.png"
-        commit_temp_file_to_gallery(brand_id, temp_png_path, filename_local)
-        sz = resolved_gallery_file_path(brand_id, filename_local).stat().st_size
-        return filename_local, sz
+        filename, sz, _ = commit_generated_image(
+            brand_id=brand_id,
+            temp_source_path=temp_png_path,
+            filename=filename_local,
+            batch_id=batch_id,
+            slide_index=index,
+            model_id=model_id,
+        )
+        return filename, sz
+
+    def _view_url(filename: str) -> str:
+        return build_gallery_view_url(
+            brand_id=brand_id,
+            filename=filename,
+            public_origin=public_origin,
+            signing_secret=signing_secret,
+        )
 
     # OpenAI supports multi-image in one request via n (logo reference via images.edit).
     if provider == "openai" and slide_count > 1:
@@ -188,17 +199,10 @@ def run_brand_slide_generation(
                         pass
 
             now = datetime.now(timezone.utc)
-            view_url = build_brand_gallery_image_view_url(
-                public_api_origin=public_origin,
-                signing_secret=signing_secret,
-                brand_id=brand_id,
-                filename=filename,
-                ttl_seconds=GALLERY_IMAGE_URL_TTL_SECONDS,
-            )
             images_out.append(
                 {
                     "filename": filename,
-                    "url": view_url,
+                    "url": _view_url(filename),
                     "storage_path": logical_gallery_key(brand_id, filename),
                     "size_bytes": file_size,
                     "created_at": now.isoformat(),
@@ -252,17 +256,10 @@ def run_brand_slide_generation(
                             pass
 
                 now = datetime.now(timezone.utc)
-                view_url = build_brand_gallery_image_view_url(
-                    public_api_origin=public_origin,
-                    signing_secret=signing_secret,
-                    brand_id=brand_id,
-                    filename=filename,
-                    ttl_seconds=GALLERY_IMAGE_URL_TTL_SECONDS,
-                )
                 images_out.append(
                     {
                         "filename": filename,
-                        "url": view_url,
+                        "url": _view_url(filename),
                         "storage_path": logical_gallery_key(brand_id, filename),
                         "size_bytes": file_size,
                         "created_at": now.isoformat(),
@@ -306,8 +303,14 @@ def run_brand_slide_generation(
                 google_api_key=google_api_key,
                 openai_api_key=openai_api_key,
             )
-            commit_temp_file_to_gallery(brand_id, temp_png_path, filename)
-            file_size = resolved_gallery_file_path(brand_id, filename).stat().st_size
+            filename, file_size, _ = commit_generated_image(
+                brand_id=brand_id,
+                temp_source_path=temp_png_path,
+                filename=filename,
+                batch_id=batch_id,
+                slide_index=index,
+                model_id=model_id,
+            )
             logger.info(
                 "Slide %s/%s written brand_id=%s file=%s bytes=%s",
                 index,
@@ -342,17 +345,10 @@ def run_brand_slide_generation(
                     pass
 
         now = datetime.now(timezone.utc)
-        view_url = build_brand_gallery_image_view_url(
-            public_api_origin=public_origin,
-            signing_secret=signing_secret,
-            brand_id=brand_id,
-            filename=filename,
-            ttl_seconds=GALLERY_IMAGE_URL_TTL_SECONDS,
-        )
         images_out.append(
             {
                 "filename": filename,
-                "url": view_url,
+                "url": _view_url(filename),
                 "storage_path": logical_gallery_key(brand_id, filename),
                 "size_bytes": file_size,
                 "created_at": now.isoformat(),

@@ -29,14 +29,31 @@ pip install -r requirements.txt
 uvicorn main:app --host 0.0.0.0 --port 9600
 ```
 
-**Backend (Docker, from repo root)**
+**Full stack (Docker Compose — backend + frontend + Postgres)**
+
+```bash
+cp backend/.env.example backend/.env
+# Edit backend/.env — set API_KEY, GOOGLE_API_KEY, and/or OPENAI_API_KEY
+
+docker compose up --build
+```
+
+| Service   | URL |
+|-----------|-----|
+| Frontend  | http://localhost:5173 (nginx proxies `/api` to the API) |
+| API       | http://localhost:9600 |
+| Swagger   | http://localhost:9600/docs |
+
+In the UI **Settings**, set **x-api-key** to match `API_KEY` in `backend/.env` (leave API base URL empty — same-origin proxy).
+
+**Backend only (Docker)**
 
 ```bash
 docker build -f backend/Dockerfile -t rankify-image-api ./backend
 docker run --env-file backend/.env -p 9600:9600 rankify-image-api
 ```
 
-**Environment file:** keep `.env` under `backend/` (e.g. `backend/.env`) so `load_dotenv()` and Docker `--env-file` match the code paths for `assets/` and `generated-images/`. If you still have a `.env` in the repository root from an older layout, copy or move it to `backend/.env`.
+**Environment file:** keep `.env` under `backend/` (e.g. `backend/.env`) so `load_dotenv()`, Compose, and `docker run --env-file` all use the same paths for `assets/` and `generated-images/`. If you still have a `.env` in the repository root from an older layout, copy or move it to `backend/.env`.
 
 ## Workflow
 

@@ -1,0 +1,67 @@
+# Full stack: Postgres + API + frontend UI.
+# Copy backend/.env.example → backend/.env and set API_KEY + provider keys before starting.
+#
+#   docker compose up --build
+#
+# UI:     http://localhost:5173  (nginx proxies /api → backend)
+# API:    http://localhost:9600
+# Docs:   http://localhost:9600/docs
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: rankify
+      POSTGRES_PASSWORD: rankify
+      POSTGRES_DB: rankify
+    ports:
+      - "5432:5432"
+    volumes:
+      - rankify_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rankify -d rankify"]
+      interval: 5s
+      timeout: 5s
+      retries: 8
+      start_period: 10s
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "9600:9600"
+    env_file:
+      - path: ./backend/.env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+psycopg://rankify:rankify@postgres:5432/rankify
+    volumes:
+      - rankify_generated_images:/app/generated-images
+      - rankify_brand_data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9600/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_USE_PROXY: "true"
+    ports:
+      - "5173:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  rankify_pg_data:
+  rankify_generated_images:
+  rankify_brand_data:

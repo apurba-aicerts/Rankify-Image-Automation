@@ -1,5 +1,6 @@
 .env
 image_automation/
+image_automation_313/
 image_env/
 __pycache__/
 .vscode/

@@ -1,6 +1,6 @@
 # Rankify — Backend service (API)
 
-This backend is **multi-brand**: each tenant has an isolated configuration (JSON + assets under `data/brands/<brand_id>/`) and its own gallery (`generated-images/<brand_id>/`). Image generation reads prompts from that configuration so the **Gemini pipeline stays brand-agnostic**—onboarding a new brand does not require code changes.
+This backend is **multi-brand**: each tenant has an isolated configuration (JSON + assets under `data/brands/<brand_id>/`) and its own gallery (`generated-images/<brand_id>/`). Image generation reads prompts from that configuration so the pipeline stays **brand-agnostic**—onboarding a new brand does not require code changes.
 
 **Quick path to first generate**
 
@@ -12,7 +12,7 @@ Legacy unscoped routes `GET /api/gallery` and `/api/gallery/raw/...` return **41
 
 ---
 
-This folder is the **Rankify image backend**: a standalone HTTP API that turns structured marketing copy and a brand logo into **Gemini-generated slide images**, stores them on **local disk**, and exposes **gallery** and **signed URL** helpers for a separate frontend.
+This folder is the **Rankify image backend**: a standalone HTTP API that turns structured marketing copy + a brand logo into slide images using **Gemini**, **OpenAI GPT Image**, or **Google Imagen 4**, stores them on **local disk**, and exposes **gallery** and **signed URL** helpers for a separate frontend.
 
 ---
 
@@ -20,7 +20,7 @@ This folder is the **Rankify image backend**: a standalone HTTP API that turns s
 
 - **Speed:** Marketing teams should not depend on manual design tools for every carousel variant.
 - **Consistency:** Generation is driven by a fixed **brand governance** prompt plus structured post text so layouts stay on-brand.
-- **Separation of concerns:** The **frontend** (demo app in `../frontend/`) only talks HTTP; all Gemini keys and file storage stay on the server.
+- **Separation of concerns:** The **frontend** (demo app in `../frontend/`) only talks HTTP; all provider keys (Gemini / Imagen / OpenAI) and file storage stay on the server.
 - **No cloud storage in this phase:** There is **no AWS/S3** dependency—images live under `generated-images/` (or `LOCAL_IMAGE_STORAGE_DIR`) so you can run and demo without cloud credentials.
 
 ---
@@ -42,7 +42,7 @@ This folder is the **Rankify image backend**: a standalone HTTP API that turns s
 1. Client sends `x-api-key` + post **content** (and optional logo) to a generate endpoint.
 2. **`main.py`** validates input, loads **``BrandConfiguration``** from ``data/brands/<brand_id>/brand.json``.
 3. **`generation/prompt_builder.py`** builds governance + slide prompts from that config.
-4. **`generation/slide_pipeline.py`** calls **`GeminiBrandImageClient`** and writes into ``generated-images/<brand_id>/``.
+4. **`generation/slide_pipeline.py`** calls the selected provider and writes into ``generated-images/<brand_id>/``.
 5. Responses include signed URLs via **`gallery_url_signing.py`** (tenant-scoped HMAC: ``brand_id:filename:exp``).
 
 ---
@@ -52,6 +52,8 @@ This folder is the **Rankify image backend**: a standalone HTTP API that turns s
 - **Python 3.12** (see `Dockerfile`)
 - **FastAPI** + **Uvicorn** — HTTP server (`main:app`)
 - **Google Gemini** — `generateContent` with image modality (`gemini_slide_client.py`)
+- **Google Imagen 4** — batch image generation via `google-genai` SDK (optional; model ids `imagen-4.0-*-generate-001`)
+- **OpenAI GPT Image** — image generation + edits via the OpenAI Images API (logo-reference generation supported)
 - **Pillow** — logo loading and image handling
 - **Optional:** **Streamlit** — local slide lab (`streamlit_slide_lab.py`; install Streamlit separately if you use it)
 
@@ -69,10 +71,11 @@ backend/
 │   └── demo_ai_certs_governance.py  # Long governance text for that seed only
 ├── generation/
 │   ├── prompt_builder.py        # Brand-agnostic prompt assembly
-│   ├── slide_pipeline.py        # Gemini + gallery orchestration
+│   ├── slide_pipeline.py        # Provider + gallery orchestration (Gemini / OpenAI / Imagen)
 │   ├── openai_social_copy_service.py  # OpenAI caption + hashtags (optional vision on gallery file)
 │   └── text_stubs.py            # Legacy stubs / prompt helpers
 ├── gemini_slide_client.py       # Gemini REST image calls
+├── generation/image_providers/  # Provider dispatch + model catalog (Gemini/OpenAI/Imagen)
 ├── gallery_local_store.py       # Per-brand gallery directories
 ├── gallery_url_signing.py       # HMAC URLs for .../gallery/raw/...
 ├── streamlit_slide_lab.py       # Optional local Streamlit UI (same prompts as API)
@@ -87,8 +90,8 @@ backend/
 |--------|----------------|
 | `main.py` | HTTP surface: brands CRUD, bootstrap, generate, brand gallery, CORS, TTL task. |
 | `brands/*` | Pydantic config model, JSON repository, demo seed content. |
-| `generation/prompt_builder.py` | Builds Gemini system + user prompts from `BrandConfiguration` (governance body, optional layout/CTA/visual/avoid modules, structured JSON summary). |
-| `generation/slide_pipeline.py` | Validates model params, runs Gemini, saves under `generated-images/<brand_id>/`. |
+| `generation/prompt_builder.py` | Builds system + user prompts from `BrandConfiguration` (governance body, optional layout/CTA/visual/avoid modules, structured JSON summary). |
+| `generation/slide_pipeline.py` | Validates model params, runs selected provider, saves under `generated-images/<brand_id>/`. |
 | `generation/openai_social_copy_service.py` | OpenAI structured caption + hashtags from brand config + studio brief; optional gallery image (vision). |
 | `generation/text_stubs.py` | Legacy helpers / doc hooks for text pipelines. |
 | `gemini_slide_client.py` | Low-level `generateContent` (IMAGE modality). |
@@ -108,10 +111,10 @@ cp .env.example .env
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `GOOGLE_API_KEY` | Yes (for generate) | Google AI Studio / Gemini API key. |
+| `GOOGLE_API_KEY` | Yes (for Google models) | Used for Gemini and Imagen 4 models. |
 | `API_KEY` | Yes (for protected routes) | Shared secret; clients send `x-api-key: <value>`. Also used to sign gallery image URLs. |
-| `OPENAI_API_KEY` | No | OpenAI: `POST /api/brands/ai-draft` and `POST .../text/social-copy` (captions/hashtags). If empty, those routes return 503. |
-| `IMAGE_TTL_HOURS` | No | Delete gallery files older than this many hours (default `24`). |
+| `OPENAI_API_KEY` | No | OpenAI: image models (`openai:gpt-image-*` on `POST /api/generate`), brand AI draft, and social copy. If empty, OpenAI-backed routes return 503. |
+| `IMAGE_TTL_HOURS` | No | Gallery history retention: delete generated images older than this many hours (default `720` = 30 days). |
 | `PUBLIC_BASE_URL` | No | Public origin for signed URLs if the API sits behind a reverse proxy (no trailing slash). |
 | `LOCAL_IMAGE_STORAGE_DIR` | No | Root for raster output (default `generated-images/`). Actual files live in `<root>/<brand_id>/`. |
 | `BRAND_DATA_DIR` | No | Root for brand JSON + assets (default `data/brands`). |
@@ -134,13 +137,28 @@ uvicorn main:app --host 0.0.0.0 --port 9600
 - Open **Swagger:** `http://localhost:9600/docs`
 - If you previously kept `.env` at the **repo root**, copy it here: `backend/.env` (the server is started with cwd `backend/`).
 
-### B. HTTP API — Docker (portable demo)
+### B. HTTP API — Docker
 
-From **repository root** (build context must be `backend/`):
+**Full stack** (API + React UI + Postgres) from **repository root**:
+
+```bash
+cp .env.example .env   # if needed
+docker compose up --build
+```
+
+API on **http://localhost:9600**; UI on **http://localhost:5173**. Compose sets `DATABASE_URL` to the `postgres` service and mounts volumes for `generated-images/` and `data/`.
+
+**API image only** (build context must be `backend/`):
 
 ```bash
 docker build -f backend/Dockerfile -t rankify-image-api ./backend
 docker run --env-file backend/.env -p 9600:9600 rankify-image-api
+```
+
+**Postgres only** (local dev):
+
+```bash
+docker compose up -d
 ```
 
 ### C. Streamlit slide lab (optional)
@@ -201,7 +219,7 @@ No authentication required. Returns server status and storage path.
 GET /api/models
 ```
 
-Returns all Gemini models the frontend can use in the generate endpoint, along with pricing info.
+Returns all supported image models the frontend can use in the generate endpoint (Gemini / OpenAI / Imagen), along with pricing hints and capability flags.
 
 **Headers:**
 ```
@@ -214,13 +232,37 @@ x-api-key: <your-api-key>
   "models": [
     {
       "model_name": "gemini-3-pro-image-preview",
+      "provider": "gemini",
+      "label": "Gemini 3 Pro Image",
       "supports_image_size": true,
+      "supports_generate": true,
+      "supports_edit": true,
       "pricing": { "1K": 0.134, "2K": 0.134, "4K": 0.24 }
     },
     {
       "model_name": "gemini-2.5-flash-image",
+      "provider": "gemini",
+      "label": "Gemini 2.5 Flash Image",
       "supports_image_size": false,
+      "supports_generate": true,
+      "supports_edit": true,
       "price_per_image_usd": 0.039
+    },
+    {
+      "model_name": "openai:gpt-image-1-mini",
+      "provider": "openai",
+      "label": "OpenAI GPT Image 1 Mini",
+      "supports_image_size": false,
+      "supports_generate": true,
+      "supports_edit": true
+    },
+    {
+      "model_name": "imagen-4.0-fast-generate-001",
+      "provider": "imagen",
+      "label": "Imagen 4 Fast",
+      "supports_image_size": false,
+      "supports_generate": true,
+      "supports_edit": false
     }
   ]
 }
@@ -245,7 +287,7 @@ x-api-key: <your-api-key>
 ```json
 {
   "image_sizes": ["1K", "2K", "4K"],
-  "note": "Image size selection applies only to gemini-3-pro-image-preview. For gemini-2.5-flash-image the size is managed automatically.",
+  "note": "Image size is used by some models (Gemini Pro, OpenAI GPT Image). For other models it may be ignored or chosen automatically.",
   "aspect_ratios": ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"]
 }
 ```
@@ -278,6 +320,8 @@ POST /api/generate
 ```
 
 Uses the **saved brand configuration** and logo (`data/brands/<brand_id>/assets/` or fallback `assets/default_logo.jpg`). Each returned `url` is a **tenant-scoped** signed link.
+
+`num_images` returns multiple slide variants. For OpenAI and Imagen 4 models, the server batches multiple images in a single upstream request when possible. For Gemini native models, the server may make multiple upstream calls.
 
 **Request Body (example):**
 ```json

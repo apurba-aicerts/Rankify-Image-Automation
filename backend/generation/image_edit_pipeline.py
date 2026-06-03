@@ -13,14 +13,13 @@ from fastapi import HTTPException
 from PIL import Image
 
 from brands.schemas import BrandConfiguration
-from gallery_local_store import (
-    commit_temp_file_to_gallery,
-    gallery_file_exists,
-    logical_gallery_key,
-    resolved_gallery_file_path,
-    validate_gallery_filename,
+from gallery_local_store import logical_gallery_key, validate_gallery_filename
+from services.gallery_service import (
+    build_gallery_view_url,
+    commit_generated_image,
+    gallery_image_exists,
+    resolve_gallery_local_path,
 )
-from gallery_url_signing import GALLERY_IMAGE_URL_TTL_SECONDS, build_brand_gallery_image_view_url
 from generation.edit_prompts import (
     EDIT_GOVERNANCE_SYSTEM,
     build_brand_edit_context_snippet,
@@ -78,10 +77,10 @@ def run_gallery_image_edit(
         validate_gallery_filename(source_filename)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid source_filename.") from exc
-    if not gallery_file_exists(brand_id, source_filename):
+    if not gallery_image_exists(brand_id, source_filename):
         raise HTTPException(status_code=404, detail="Source image not found in gallery.")
 
-    src_path = resolved_gallery_file_path(brand_id, source_filename)
+    src_path = resolve_gallery_local_path(brand_id, source_filename)
     try:
         base = Image.open(src_path)
     except OSError as exc:
@@ -114,8 +113,15 @@ def run_gallery_image_edit(
             google_api_key=google_api_key,
             openai_api_key=openai_api_key,
         )
-        commit_temp_file_to_gallery(brand_id, temp_png_path, out_name)
-        file_size = resolved_gallery_file_path(brand_id, out_name).stat().st_size
+        edit_batch = uuid.uuid4().hex[:8]
+        out_name, file_size, _ = commit_generated_image(
+            brand_id=brand_id,
+            temp_source_path=temp_png_path,
+            filename=out_name,
+            batch_id=edit_batch,
+            slide_index=None,
+            model_id=model_id,
+        )
     except ImageProviderNoOutput as exc:
         detail = str(exc).strip()
         if len(detail) > 1800:
@@ -139,12 +145,11 @@ def run_gallery_image_edit(
                 pass
 
     now = datetime.now(timezone.utc)
-    view_url = build_brand_gallery_image_view_url(
-        public_api_origin=public_origin,
-        signing_secret=signing_secret,
+    view_url = build_gallery_view_url(
         brand_id=brand_id,
         filename=out_name,
-        ttl_seconds=GALLERY_IMAGE_URL_TTL_SECONDS,
+        public_origin=public_origin,
+        signing_secret=signing_secret,
     )
     per_image = estimate_price_usd(
         model_id,

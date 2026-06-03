@@ -80,6 +80,30 @@ export function CreativeStudioPage() {
     [voiceToneId]
   );
 
+  /** Versions = current studio session only (this generate run + edits), not full gallery history. */
+  const toVersionItems = (images) =>
+    (images || [])
+      .map((img, idx) => ({
+        id: `v-${img.filename || idx}`,
+        url: img.url,
+        filename: img.filename,
+      }))
+      .filter((x) => x.url && x.filename);
+
+  const setSessionVersionsFromImages = useCallback((images) => {
+    setArtifactHistory(toVersionItems(images).slice(0, 16));
+  }, []);
+
+  const appendSessionVersions = useCallback((images) => {
+    const newItems = toVersionItems(images);
+    if (!newItems.length) return;
+    setArtifactHistory((h) => {
+      const seen = new Set(h.map((x) => x.filename));
+      const merged = [...newItems.filter((x) => !seen.has(x.filename)), ...h];
+      return merged.slice(0, 16);
+    });
+  }, []);
+
   const fetchAndApplySocialCopy = useCallback(
     async (imageFilename) => {
       if (!brandId || !brand || !imageFilename) return;
@@ -186,6 +210,16 @@ export function CreativeStudioPage() {
     load();
   }, [load]);
 
+  /** New brand or revisit studio: empty versions until this session generates. */
+  useEffect(() => {
+    setArtifactHistory([]);
+    setResult(null);
+    setPinnedPreviewUrl(null);
+    setActiveSourceFilename(null);
+    setCaptionText("");
+    setHashtagChips([]);
+  }, [brandId]);
+
   useEffect(() => {
     return () => {
       if (brandLogoSrc) URL.revokeObjectURL(brandLogoSrc);
@@ -223,6 +257,7 @@ export function CreativeStudioPage() {
     }
     setBusy(true);
     setResult(null);
+    setArtifactHistory([]);
     setCaptionText("");
     setHashtagChips([]);
     setPinnedPreviewUrl(null);
@@ -243,26 +278,12 @@ export function CreativeStudioPage() {
         image_size: modelSupportsImageSize(modelCatalog, modelName) ? imageSize : undefined,
       };
       const data = await client.request("/api/generate", { method: "POST", json: body });
-      setResult(data);
-      const primaryFn = data.images?.[0]?.filename ?? null;
-      setActiveSourceFilename(primaryFn);
-      await fetchAndApplySocialCopy(primaryFn);
       const images = data.images || [];
-      if (images.length) {
-        setArtifactHistory((h) => {
-          const next = [
-            ...images
-              .map((img, idx) => ({
-                id: `gen-${Date.now()}-${idx}`,
-                url: img.url,
-                filename: img.filename,
-              }))
-              .filter((x) => x.url),
-            ...h,
-          ];
-          return next.slice(0, 16);
-        });
-      }
+      setResult(data);
+      setSessionVersionsFromImages(images);
+      const primaryFn = images[0]?.filename ?? null;
+      setActiveSourceFilename(primaryFn);
+      void fetchAndApplySocialCopy(primaryFn);
       showToast(images.length > 1 ? `Generated ${images.length} variants.` : "Visual generated.");
     } catch (e) {
       showToast(e.message || String(e), "error");
@@ -324,13 +345,11 @@ export function CreativeStudioPage() {
       });
       setResult(data);
       setPinnedPreviewUrl(null);
-      const url = data.images?.[0]?.url;
-      const fn = data.images?.[0]?.filename;
+      const editImages = data.images || [];
+      const fn = editImages[0]?.filename;
       if (fn) setActiveSourceFilename(fn);
-      if (fn) await fetchAndApplySocialCopy(fn);
-      if (url) {
-        setArtifactHistory((h) => [{ id: `edit-${Date.now()}`, url, filename: fn }, ...h].slice(0, 16));
-      }
+      appendSessionVersions(editImages);
+      void fetchAndApplySocialCopy(fn);
       setAiEditHint("");
       showToast("Edit applied.");
     } catch (e) {
@@ -680,7 +699,7 @@ export function CreativeStudioPage() {
                 ))}
               </div>
             ) : (
-              <p className="os-muted">Thumbnails of each run will collect here.</p>
+              <p className="os-muted">Variants from this session appear here. Full history is in Gallery.</p>
             )}
           </div>
         </aside>

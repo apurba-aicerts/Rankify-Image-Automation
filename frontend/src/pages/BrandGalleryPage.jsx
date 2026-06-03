@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useApp } from "../context/AppContext.jsx";
 
@@ -7,17 +7,25 @@ export function BrandGalleryPage() {
   const brandId = rawId ? decodeURIComponent(rawId) : "";
   const { client, showToast } = useApp();
   const [data, setData] = useState(null);
+  const [brand, setBrand] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  const loadGallery = useCallback(() => {
+    if (!brandId) return Promise.resolve();
+    return Promise.all([
+      client.request(`/api/brands/${encodeURIComponent(brandId)}/gallery`),
+      client.request(`/api/brands/${encodeURIComponent(brandId)}`).catch(() => null),
+    ]).then(([gallery, brandConfig]) => {
+      setData(gallery);
+      setBrand(brandConfig);
+    });
+  }, [brandId, client]);
 
   useEffect(() => {
     if (!brandId) return;
     let cancelled = false;
     setLoading(true);
-    client
-      .request(`/api/brands/${encodeURIComponent(brandId)}/gallery`)
-      .then((d) => {
-        if (!cancelled) setData(d);
-      })
+    loadGallery()
       .catch((e) => {
         if (!cancelled) showToast(e.message || String(e), "error");
       })
@@ -27,9 +35,11 @@ export function BrandGalleryPage() {
     return () => {
       cancelled = true;
     };
-  }, [brandId, client, showToast]);
+  }, [brandId, loadGallery, showToast]);
 
   const images = data?.images || [];
+  const displayName = brand?.display_name || brandId;
+  const total = data?.total ?? images.length;
 
   return (
     <div className="page gallery-page">
@@ -38,12 +48,13 @@ export function BrandGalleryPage() {
           <Link to="/" className="back-link">
             ← Brands
           </Link>
-          <h1>Generated assets</h1>
+          <h1>{displayName}</h1>
           <p className="lede">
-            Gallery for <code>{brandId}</code> — signed view URLs expire after the server TTL.
+            Generation history — {total === 1 ? "1 image" : `${total} images`} stored for up to 30 days.
+            Download links refresh when you reload this page.
           </p>
           <p className="gallery-studio-link">
-            <Link to={`/brands/${encodeURIComponent(brandId)}/studio`}>Open AI Creative Studio for this brand →</Link>
+            <Link to={`/brands/${encodeURIComponent(brandId)}/studio`}>← Back to Creative Studio</Link>
           </p>
         </div>
         <button
@@ -51,9 +62,7 @@ export function BrandGalleryPage() {
           className="btn btn-secondary"
           onClick={() => {
             setLoading(true);
-            client
-              .request(`/api/brands/${encodeURIComponent(brandId)}/gallery`)
-              .then(setData)
+            loadGallery()
               .catch((e) => showToast(e.message || String(e), "error"))
               .finally(() => setLoading(false));
           }}
@@ -65,7 +74,7 @@ export function BrandGalleryPage() {
 
       {images.length === 0 && !loading && (
         <div className="empty-state">
-          <p>No images in this gallery yet. Generate from the brand card on the dashboard.</p>
+          <p>No generated images yet. Open Creative Studio to create your first visual.</p>
         </div>
       )}
 

@@ -15,7 +15,7 @@ function envApiKey() {
 function defaultApiBase() {
   const fromEnv = envApiBase();
   if (fromEnv) return fromEnv;
-  if (import.meta.env?.DEV) return "";
+  if (import.meta.env?.DEV || import.meta.env?.VITE_USE_PROXY === "true") return "";
   return "http://localhost:9600";
 }
 

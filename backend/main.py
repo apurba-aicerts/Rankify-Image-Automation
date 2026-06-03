@@ -32,6 +32,10 @@ from pydantic import BaseModel, Field, model_validator
 from brands.ai_brand_draft_service import draft_brand_create_payload_from_materials
 from brands.demo_brand_template import build_demo_ai_certs_brand
 from brands.repository import BRAND_DATA_DIR, BrandRepository
+from brands.repository_factory import get_brand_repository
+from db.config import database_enabled
+from db.session import init_database
+from storage.config import STORAGE_BACKEND, s3_enabled
 from brands.schemas import (
     BrandAiDraftRequest,
     BrandAiDraftResponse,
@@ -40,11 +44,7 @@ from brands.schemas import (
     BrandSummary,
     validate_brand_id,
 )
-from gallery_url_signing import (
-    GALLERY_IMAGE_URL_TTL_SECONDS,
-    build_brand_gallery_image_view_url,
-    verify_brand_gallery_image_view_signature,
-)
+from gallery_url_signing import verify_brand_gallery_image_view_signature
 from generation.campaign_assembler import build_structured_campaign_copy
 from generation.image_edit_pipeline import run_gallery_image_edit
 from generation.openai_social_copy_service import generate_social_copy_openai
@@ -54,14 +54,17 @@ from logging_config import configure_logging
 from gallery_local_store import (
     GALLERY_STORAGE_DIR,
     GalleryFileMetadata,
-    commit_temp_file_to_gallery,
-    gallery_file_exists,
-    list_gallery_files_with_metadata,
     logical_gallery_key,
-    purge_all_brand_galleries_older_than_hours,
-    remove_gallery_file,
-    resolved_gallery_file_path,
     validate_gallery_filename,
+)
+from services.brand_assets import resolve_logo_local_path, save_logo_upload
+from services.gallery_service import (
+    build_gallery_view_url,
+    delete_gallery_image,
+    gallery_image_exists,
+    list_gallery_metadata,
+    purge_all_galleries_older_than_hours,
+    resolve_gallery_local_path,
 )
 
 load_dotenv()
@@ -73,7 +76,8 @@ DEFAULT_LOGO_PATH = Path("assets/default_logo.jpg")
 API_KEY: str = os.getenv("API_KEY", "")
 GOOGLE_API_KEY: str = os.getenv("GOOGLE_API_KEY", "")
 OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "").strip()
-IMAGE_TTL_HOURS: int = int(os.getenv("IMAGE_TTL_HOURS", "24"))
+# Gallery history retention (default 30 days). Purge job deletes DB rows + S3/local blobs older than this.
+IMAGE_TTL_HOURS: int = int(os.getenv("IMAGE_TTL_HOURS", str(30 * 24)))
 PUBLIC_BASE_URL: str = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 
 ALLOWED_MODEL_IDS: tuple[str, ...] = ALLOWED_IMAGE_MODEL_IDS
@@ -103,7 +107,7 @@ def _public_api_origin(request: Request) -> str:
 async def _run_periodic_gallery_ttl_cleanup() -> None:
     while True:
         try:
-            deleted = purge_all_brand_galleries_older_than_hours(IMAGE_TTL_HOURS)
+            deleted = purge_all_galleries_older_than_hours(IMAGE_TTL_HOURS)
             if deleted:
                 logger.info("Gallery TTL purge removed %s file(s) older than %sh.", deleted, IMAGE_TTL_HOURS)
         except Exception:
@@ -113,8 +117,14 @@ async def _run_periodic_gallery_ttl_cleanup() -> None:
 
 @asynccontextmanager
 async def _application_lifespan(app: FastAPI):
+    if s3_enabled() and not database_enabled():
+        raise RuntimeError("STORAGE_BACKEND=s3 requires DATABASE_URL to be set.")
+    if database_enabled():
+        init_database()
     logger.info(
-        "Rankify API starting | gallery=%s brands=%s ttl_h=%s",
+        "Rankify API starting | storage=%s db=%s gallery=%s brands=%s ttl_h=%s",
+        STORAGE_BACKEND,
+        database_enabled(),
         GALLERY_STORAGE_DIR,
         BRAND_DATA_DIR,
         IMAGE_TTL_HOURS,
@@ -299,12 +309,11 @@ def _build_gallery_image_item(
     if last_modified.tzinfo is None:
         last_modified = last_modified.replace(tzinfo=timezone.utc)
     age_hours = (datetime.now(timezone.utc) - last_modified).total_seconds() / 3600
-    view_url = build_brand_gallery_image_view_url(
-        public_api_origin=public_origin,
-        signing_secret=API_KEY,
+    view_url = build_gallery_view_url(
         brand_id=brand_id,
         filename=filename,
-        ttl_seconds=GALLERY_IMAGE_URL_TTL_SECONDS,
+        public_origin=public_origin,
+        signing_secret=API_KEY,
     )
     return GalleryImageItem(
         filename=filename,
@@ -328,7 +337,7 @@ def _http_media_type_for_image_filename(filename: str) -> str:
 
 
 def _load_brand_or_404(brand_id: str) -> BrandConfiguration:
-    repo = BrandRepository()
+    repo = get_brand_repository()
     try:
         return repo.load(brand_id)
     except FileNotFoundError:
@@ -356,28 +365,66 @@ def _run_brand_studio_social_copy(
     image_path: Optional[Path] = None
     if body.image_filename and body.image_filename.strip():
         fn = body.image_filename.strip()
-        path = resolved_gallery_file_path(brand_id, fn)
-        if not path.is_file():
+        if not gallery_image_exists(brand_id, fn):
             raise HTTPException(status_code=400, detail=f"Gallery image not found: {fn}")
-        image_path = path
+        image_path = resolve_gallery_local_path(brand_id, fn)
     cap, tags, model_used = generate_social_copy_openai(
         cfg=cfg,
         structured_post_copy=structured,
         image_path=image_path,
         openai_api_key=OPENAI_API_KEY,
     )
-    return BrandStudioSocialCopyResponse(caption=cap, hashtags=tags, model_used=model_used)
+    resp = BrandStudioSocialCopyResponse(caption=cap, hashtags=tags, model_used=model_used)
+    if database_enabled():
+        from db.repositories import GeneratedImageDbRepository, SocialCopyDbRepository
+
+        img_id = None
+        if body.image_filename and body.image_filename.strip():
+            row = GeneratedImageDbRepository().get_by_filename(brand_id, body.image_filename.strip())
+            if row is not None:
+                img_id = row.id
+        SocialCopyDbRepository().insert(
+            brand_id=brand_id,
+            caption=cap,
+            hashtags=tags,
+            model_used=model_used,
+            generated_image_id=img_id,
+        )
+    return resp
 
 
 @app.get("/health")
 async def read_health_status() -> dict:
-    return {
+    payload: dict = {
         "status": "ok",
-        "storage": "local",
+        "storage_backend": STORAGE_BACKEND,
+        "database": "enabled" if database_enabled() else "disabled",
         "gallery_root": str(GALLERY_STORAGE_DIR),
         "brand_config_root": str(BRAND_DATA_DIR),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+    if database_enabled():
+        try:
+            from db.session import get_engine
+            from sqlalchemy import text
+
+            with get_engine().connect() as conn:
+                conn.execute(text("SELECT 1"))
+            payload["database_status"] = "ok"
+        except Exception as exc:
+            payload["status"] = "degraded"
+            payload["database_status"] = f"error: {exc}"
+    if s3_enabled():
+        try:
+            from storage.s3_client import get_s3_client
+            from storage.config import AWS_S3_BUCKET_NAME
+
+            get_s3_client().head_bucket(Bucket=AWS_S3_BUCKET_NAME)
+            payload["s3_status"] = "ok"
+        except Exception as exc:
+            payload["status"] = "degraded"
+            payload["s3_status"] = f"error: {exc}"
+    return payload
 
 
 @app.get(
@@ -386,7 +433,7 @@ async def read_health_status() -> dict:
     summary="List onboarded brands",
 )
 async def list_brands() -> dict:
-    repo = BrandRepository()
+    repo = get_brand_repository()
     summaries: list[BrandSummary] = repo.list_summaries()
     logger.debug("Listed brands count=%s", len(summaries))
     return {"brands": [s.model_dump(mode="json") for s in summaries], "total": len(summaries)}
@@ -398,7 +445,7 @@ async def list_brands() -> dict:
     summary="Onboard a new brand",
 )
 async def create_brand(payload: BrandCreatePayload) -> BrandConfiguration:
-    repo = BrandRepository()
+    repo = get_brand_repository()
     if repo.exists(payload.brand_id):
         raise HTTPException(status_code=409, detail="brand_id already exists.")
     cfg = payload.to_configuration()
@@ -444,7 +491,7 @@ async def ai_draft_brand(body: BrandAiDraftRequest) -> BrandAiDraftResponse:
     summary="Create demo-ai-certs brand from packaged template (idempotent)",
 )
 async def bootstrap_demo_brand() -> BrandConfiguration:
-    repo = BrandRepository()
+    repo = get_brand_repository()
     cfg = build_demo_ai_certs_brand("demo-ai-certs")
     if repo.exists(cfg.brand_id):
         logger.debug("Bootstrap demo: brand already exists brand_id=%s", cfg.brand_id)
@@ -472,7 +519,7 @@ async def replace_brand(brand_id: str, body: BrandConfiguration) -> BrandConfigu
     validate_brand_id(brand_id)
     if body.brand_id != brand_id:
         raise HTTPException(status_code=400, detail="brand_id in path and body must match.")
-    repo = BrandRepository()
+    repo = get_brand_repository()
     if not repo.exists(brand_id):
         raise HTTPException(status_code=404, detail="Brand not found.")
     repo.save(body)
@@ -486,7 +533,7 @@ async def replace_brand(brand_id: str, body: BrandConfiguration) -> BrandConfigu
     summary="Delete brand configuration, assets, and generated gallery for that brand",
 )
 async def delete_brand(brand_id: str) -> dict:
-    repo = BrandRepository()
+    repo = get_brand_repository()
     if not repo.exists(brand_id):
         raise HTTPException(status_code=404, detail="Brand not found.")
     repo.delete(brand_id)
@@ -506,26 +553,30 @@ async def upload_brand_logo(
     brand_id: str,
     file: UploadFile = File(..., description="Logo image"),
 ) -> dict:
-    _load_brand_or_404(brand_id)
-    repo = BrandRepository()
-    repo.ensure_layout(brand_id)
-    dest = repo.logo_path(brand_id)
+    cfg = _load_brand_or_404(brand_id)
+    get_brand_repository().ensure_layout(brand_id)
     suffix = Path(file.filename or "logo").suffix.lower()
     if suffix not in (".png", ".jpg", ".jpeg", ".webp"):
         raise HTTPException(status_code=400, detail="Logo must be png, jpg, or webp.")
+    content_type = _http_media_type_for_image_filename(f"x{suffix}")
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(await file.read())
         tmp_path = tmp.name
     try:
-        shutil.move(tmp_path, dest)
+        stored = save_logo_upload(
+            brand_id=brand_id,
+            temp_path=tmp_path,
+            filename=cfg.logo_asset_filename,
+            content_type=content_type,
+        )
     except OSError as exc:
         try:
             os.unlink(tmp_path)
         except OSError:
             pass
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    logger.info("Logo uploaded brand_id=%s path=%s", brand_id, dest)
-    return {"message": "Logo saved.", "path": str(dest)}
+    logger.info("Logo uploaded brand_id=%s stored=%s", brand_id, stored)
+    return {"message": "Logo saved.", "path": stored}
 
 
 @app.get(
@@ -534,10 +585,9 @@ async def upload_brand_logo(
     summary="Download configured logo file (if present)",
 )
 async def get_brand_logo(brand_id: str) -> FileResponse:
-    _load_brand_or_404(brand_id)
-    repo = BrandRepository()
-    path = repo.logo_path(brand_id)
-    if not path.is_file():
+    cfg = _load_brand_or_404(brand_id)
+    path = resolve_logo_local_path(brand_id, cfg.logo_asset_filename)
+    if path is None or not path.is_file():
         raise HTTPException(status_code=404, detail="No logo file for this brand yet.")
     return FileResponse(path, media_type=_http_media_type_for_image_filename(path.name))
 
@@ -719,7 +769,7 @@ async def list_brand_gallery(brand_id: str, request: Request) -> GalleryListResp
     _ = _load_brand_or_404(brand_id)
     public_origin = _public_api_origin(request)
     try:
-        rows: list[GalleryFileMetadata] = list_gallery_files_with_metadata(brand_id)
+        rows: list[GalleryFileMetadata] = list_gallery_metadata(brand_id)
     except OSError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     rows.sort(key=lambda r: r.last_modified_utc, reverse=True)
@@ -789,13 +839,13 @@ async def redirect_brand_gallery_image(brand_id: str, filename: str, request: Re
         validate_gallery_filename(filename)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid filename.")
-    if not gallery_file_exists(brand_id, filename):
+    if not gallery_image_exists(brand_id, filename):
         raise HTTPException(status_code=404, detail="Image not found.")
-    url = build_brand_gallery_image_view_url(
-        public_api_origin=_public_api_origin(request),
-        signing_secret=API_KEY,
+    url = build_gallery_view_url(
         brand_id=brand_id,
         filename=filename,
+        public_origin=_public_api_origin(request),
+        signing_secret=API_KEY,
     )
     return RedirectResponse(url=url, status_code=307)
 
@@ -825,9 +875,9 @@ async def stream_brand_gallery_image(brand_id: str, filename: str, exp: int, sig
             exp,
         )
         raise HTTPException(status_code=401, detail="Invalid or expired signature.")
-    if not gallery_file_exists(brand_id, filename):
+    if not gallery_image_exists(brand_id, filename):
         raise HTTPException(status_code=404, detail="Image not found.")
-    path = resolved_gallery_file_path(brand_id, filename)
+    path = resolve_gallery_local_path(brand_id, filename)
     logger.debug("Gallery raw served brand_id=%s filename=%s", brand_id, filename)
     return FileResponse(path, media_type=_http_media_type_for_image_filename(filename))
 
@@ -843,10 +893,10 @@ async def delete_brand_gallery_image(brand_id: str, filename: str) -> GalleryDel
         validate_gallery_filename(filename)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid filename.")
-    if not gallery_file_exists(brand_id, filename):
+    if not gallery_image_exists(brand_id, filename):
         raise HTTPException(status_code=404, detail="Image not found.")
     try:
-        remove_gallery_file(brand_id, filename)
+        delete_gallery_image(brand_id, filename)
     except OSError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     logger.info("Gallery image deleted brand_id=%s filename=%s", brand_id, filename)

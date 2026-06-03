@@ -1,0 +1,18 @@
+# Postgres only (for local dev without the full stack).
+# For API + UI + Postgres together, use the repo root:
+#   docker compose -f ../docker-compose.yml up --build
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: rankify
+      POSTGRES_PASSWORD: rankify
+      POSTGRES_DB: rankify
+    ports:
+      - "5432:5432"
+    volumes:
+      - rankify_pg_data:/var/lib/postgresql/data
+
+volumes:
+  rankify_pg_data:

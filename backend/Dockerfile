@@ -33,5 +33,8 @@ RUN mkdir -p /app/outputs
 # Expose FastAPI port
 EXPOSE 9600
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:9600/health || exit 1
+
 # Run the FastAPI app with uvicorn
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "9600"]
