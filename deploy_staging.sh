@@ -107,7 +107,7 @@ if [ "$backend_healthy" = false ] || [ "$frontend_healthy" = false ]; then
   exit 1
 else
   echo ">>> Running database migrations via Alembic..."
-  if docker compose exec -T backend alembic upgrade head; then
+  if docker compose exec -T backend python -m alembic upgrade head; then
     echo "  [OK] Database migrations applied successfully."
   else
     echo "  [ERROR] Database migrations failed!"
