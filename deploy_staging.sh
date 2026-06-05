@@ -106,6 +106,16 @@ if [ "$backend_healthy" = false ] || [ "$frontend_healthy" = false ]; then
   docker compose logs --tail=30 frontend
   exit 1
 else
+  echo ">>> Running database migrations via Alembic..."
+  if docker compose exec -T backend alembic upgrade head; then
+    echo "  [OK] Database migrations applied successfully."
+  else
+    echo "  [ERROR] Database migrations failed!"
+    echo ">>> Showing last 30 lines of backend container logs:"
+    docker compose logs --tail=30 backend
+    exit 1
+  fi
+
   echo ""
   echo "==========================================="
   echo "SUCCESS: Deployment completed successfully!"
