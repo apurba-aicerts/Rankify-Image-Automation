@@ -33,12 +33,12 @@ export function parseHintsLines(s) {
  * Build POST /api/brands body from wizard form state.
  */
 export function buildBrandCreatePayload(form) {
-  const brand_id = form.brand_id.trim().toLowerCase();
+  const brand_id = (form.brand_id || "").trim().toLowerCase();
   const display_name = form.display_name.trim();
-  if (!brand_id || !display_name) {
-    throw new Error("Brand ID and display name are required.");
+  if (!display_name) {
+    throw new Error("Display name is required.");
   }
-  if (brand_id.length < 2) {
+  if (brand_id && brand_id.length < 2) {
     throw new Error("Brand ID must be at least 2 characters (e.g. my-brand).");
   }
   const gov = (form.governance_prompt_template || "").trim();
@@ -47,7 +47,7 @@ export function buildBrandCreatePayload(form) {
   }
 
   return {
-    brand_id,
+    ...(brand_id ? { brand_id } : {}),
     display_name,
     tagline: form.tagline.trim(),
     legal_suffix: form.legal_suffix.trim(),

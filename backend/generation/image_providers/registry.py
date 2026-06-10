@@ -15,6 +15,7 @@ OPENAI_MODEL_IDS: tuple[str, ...] = (
     "gpt-image-1",
     "gpt-image-1-mini",
     "gpt-image-1.5",
+    "gpt-image-2",
 )
 
 IMAGEN_MODEL_IDS: tuple[str, ...] = (

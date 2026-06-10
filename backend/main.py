@@ -471,12 +471,11 @@ async def create_brand(
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=exc.errors()) from exc
 
-    repo = get_brand_repository()
-    if repo.exists(body.brand_id):
-        raise HTTPException(status_code=409, detail="brand_id already exists.")
-
     cfg = body.to_configuration()
     brand_id = cfg.brand_id
+    repo = get_brand_repository()
+    if repo.exists(brand_id):
+        raise HTTPException(status_code=409, detail="brand_id already exists.")
     suffix = _logo_suffix_from_upload(logo)
     tmp_path = await _spool_upload_to_temp(logo, suffix)
     try:

@@ -135,17 +135,10 @@ export function BrandFormModal({ open, mode, brandId, onClose, onSaved }) {
     }
     setBusy(true);
     try {
-      const formForPayload =
-        mode === "create"
-          ? {
-              ...form,
-              brand_id: (form.brand_id || "").trim() || crypto.randomUUID().toLowerCase(),
-            }
-          : form;
-      const payload = buildBrandCreatePayload(formForPayload);
+      const payload = buildBrandCreatePayload(form);
       if (mode === "create") {
-        await createBrandWithLogo({ apiBase, apiKey, payload, file: logoFile });
-        showToast(`Brand “${payload.display_name || payload.brand_id}” created.`);
+        const created = await createBrandWithLogo({ apiBase, apiKey, payload, file: logoFile });
+        showToast(`Brand “${created.display_name || created.brand_id}” created.`);
       } else if (mode === "edit" && brandId) {
         const body = buildBrandPutConfiguration(form);
         if (body.brand_id !== brandId) {

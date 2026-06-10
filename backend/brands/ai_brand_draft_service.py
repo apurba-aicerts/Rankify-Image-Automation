@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import logging
-import uuid
 from typing import Optional
 
 from fastapi import HTTPException
 from openai import OpenAI
 
 from brands.openai_brand_draft import OpenAIBrandCreateDraft, openai_draft_to_create_payload
-from brands.schemas import BrandCreatePayload, validate_brand_id
+from brands.schemas import BrandCreatePayload, resolve_brand_id
 
 logger = logging.getLogger(__name__)
 
@@ -105,11 +104,7 @@ def draft_brand_create_payload_from_materials(
             detail=f"Invalid model_name. Choose from {list(ALLOWED_OPENAI_DRAFT_MODELS)}",
         )
 
-    brand_slug = (
-        validate_brand_id(brand_id.strip().lower())
-        if brand_id and brand_id.strip()
-        else str(uuid.uuid4()).lower()
-    )
+    brand_slug = resolve_brand_id(brand_id)
     messages = _messages(brand_slug, brand_materials)
     client = OpenAI(api_key=openai_api_key)
 

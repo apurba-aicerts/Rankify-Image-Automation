@@ -8,6 +8,7 @@ generation code stays brand-agnostic.
 from __future__ import annotations
 
 import re
+import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -26,6 +27,13 @@ def validate_brand_id(brand_id: str) -> str:
     if len(s) < 2 or len(s) > 64 or not _BRAND_ID_RE.match(s):
         raise ValueError(msg)
     return s
+
+
+def resolve_brand_id(brand_id: Optional[str]) -> str:
+    """Use ``brand_id`` when provided; otherwise assign a new UUID slug."""
+    if brand_id and brand_id.strip():
+        return validate_brand_id(brand_id.strip().lower())
+    return str(uuid.uuid4()).lower()
 
 
 class BrandColors(BaseModel):
@@ -164,9 +172,12 @@ class BrandSummary(BaseModel):
 
 
 class BrandCreatePayload(BaseModel):
-    """Body for creating a brand (``brand_id`` + ``display_name`` + ``generation`` required)."""
+    """Body for creating a brand (``display_name`` + ``generation`` required; ``brand_id`` optional)."""
 
-    brand_id: str = Field(..., min_length=2, max_length=64)
+    brand_id: Optional[str] = Field(
+        default=None,
+        description="If omitted or empty, server assigns a UUID slug.",
+    )
     display_name: str
     tagline: str = ""
     legal_suffix: str = ""
@@ -180,14 +191,19 @@ class BrandCreatePayload(BaseModel):
     generation: BrandGenerationRules
     logo_asset_filename: str = "logo.png"
 
-    @field_validator("brand_id")
+    @field_validator("brand_id", mode="before")
     @classmethod
-    def _slug(cls, value: str) -> str:
-        return validate_brand_id(value.strip().lower())
+    def _optional_slug(cls, value: object) -> Optional[str]:
+        if value is None:
+            return None
+        s = str(value).strip()
+        if not s:
+            return None
+        return validate_brand_id(s.lower())
 
     def to_configuration(self) -> BrandConfiguration:
         return BrandConfiguration(
-            brand_id=self.brand_id,
+            brand_id=resolve_brand_id(self.brand_id),
             display_name=self.display_name,
             tagline=self.tagline,
             legal_suffix=self.legal_suffix,
