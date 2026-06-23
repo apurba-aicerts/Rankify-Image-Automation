@@ -71,7 +71,7 @@ export function buildBrandCreatePayload(form) {
     social_defaults: {
       preferred_platforms: splitCsv(form.social_platforms),
       default_aspect_ratio: form.default_aspect_ratio || "1:1",
-      default_image_size: form.default_image_size || "2K",
+      default_image_size: form.default_image_size || "1K",
     },
     platform_hints: { hints: parseHintsLines(form.platform_hints_lines) },
     content_themes: {
@@ -116,7 +116,7 @@ export function emptyBrandForm() {
     voice_target_audience: "",
     social_platforms: "linkedin, instagram",
     default_aspect_ratio: "1:1",
-    default_image_size: "2K",
+    default_image_size: "1K",
     content_categories: "Product, Education",
     content_themes: "",
     hashtag_style: "",
@@ -154,7 +154,7 @@ export function brandToForm(brand) {
   f.voice_target_audience = brand.voice?.target_audience || "";
   f.social_platforms = (brand.social_defaults?.preferred_platforms || []).join(", ");
   f.default_aspect_ratio = brand.social_defaults?.default_aspect_ratio || "1:1";
-  f.default_image_size = brand.social_defaults?.default_image_size || "2K";
+  f.default_image_size = brand.social_defaults?.default_image_size || "1K";
   f.content_categories = (brand.content_themes?.categories || []).join(", ");
   f.content_themes = (brand.content_themes?.recurring_themes || []).join(", ");
   f.hashtag_style = brand.text_preferences?.hashtag_style || "";

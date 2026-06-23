@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Modal } from "./Modal.jsx";
 import { useApp } from "../context/AppContext.jsx";
 import { SAMPLE_POST } from "../constants/defaults.js";
-import { modelOptionLabel, modelSupportsImageSize } from "../lib/modelCatalog.js";
+import { filterStudioImageModels, modelOptionLabel, modelSupportsImageSize } from "../lib/modelCatalog.js";
 
 export function GenerateImageModal({ open, brandId, onClose, onGenerated }) {
   const { client, showToast } = useApp();
@@ -10,7 +10,7 @@ export function GenerateImageModal({ open, brandId, onClose, onGenerated }) {
   const [modelName, setModelName] = useState("gemini-3-pro-image-preview");
   const [numImages, setNumImages] = useState(1);
   const [aspectRatio, setAspectRatio] = useState("1:1");
-  const [imageSize, setImageSize] = useState("2K");
+  const [imageSize, setImageSize] = useState("1K");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
   const [modelCatalog, setModelCatalog] = useState([]);
@@ -30,10 +30,10 @@ export function GenerateImageModal({ open, brandId, onClose, onGenerated }) {
         ]);
         if (cancelled) return;
         setAspectRatio(brand.social_defaults?.default_aspect_ratio || "1:1");
-        setImageSize(brand.social_defaults?.default_image_size || "2K");
+        setImageSize(brand.social_defaults?.default_image_size || "1K");
         setRatios(meta.aspect_ratios || []);
         setSizes(meta.image_sizes || []);
-        const catalog = (mlist.models || []).filter((m) => m.model_name);
+        const catalog = filterStudioImageModels(mlist.models || []);
         setModelCatalog(catalog);
         const ids = catalog.map((m) => m.model_name);
         if (ids.length && !ids.includes(modelName)) setModelName(ids[0]);

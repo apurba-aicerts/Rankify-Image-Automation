@@ -15,8 +15,7 @@ import { enforcementFromBrand } from "../lib/brandEnforcementPreview.js";
 import {
   buildCaptionHashtagDraft,
 } from "../lib/creativeDirectionPreview.js";
-import { toastComingSoon } from "../lib/featureMessages.js";
-import { modelOptionLabel, modelSupportsImageSize } from "../lib/modelCatalog.js";
+import { filterStudioImageModels, modelOptionLabel, modelSupportsImageSize } from "../lib/modelCatalog.js";
 import "../styles/studio.css";
 
 function aspectRatioToCss(r) {
@@ -52,7 +51,7 @@ export function CreativeStudioPage() {
   const [sizes, setSizes] = useState([]);
   const [modelName, setModelName] = useState("gemini-3-pro-image-preview");
   const [aspectRatio, setAspectRatio] = useState("1:1");
-  const [imageSize, setImageSize] = useState("2K");
+  const [imageSize, setImageSize] = useState("1K");
   const [numImages, setNumImages] = useState(1);
 
   const [campaignGoal, setCampaignGoal] = useState("brand_awareness");
@@ -62,6 +61,7 @@ export function CreativeStudioPage() {
   const [intent, setIntent] = useState("");
 
   const [busy, setBusy] = useState(false);
+  const [regenerateBusy, setRegenerateBusy] = useState(false);
   const [result, setResult] = useState(null);
   const [captionText, setCaptionText] = useState("");
   const [hashtagChips, setHashtagChips] = useState([]);
@@ -176,10 +176,10 @@ export function CreativeStudioPage() {
       setBrand(b);
       setAspectRatio(b.social_defaults?.default_aspect_ratio || "1:1");
       const defSize = b.social_defaults?.default_image_size;
-      setImageSize(defSize && ["1K", "2K", "4K"].includes(defSize) ? defSize : "2K");
+      setImageSize(defSize && ["1K", "2K", "4K"].includes(defSize) ? defSize : "1K");
       setRatios(meta.aspect_ratios || []);
       setSizes(meta.image_sizes || []);
-      const catalog = (mlist.models || []).filter((m) => m.model_name);
+      const catalog = filterStudioImageModels(mlist.models || []);
       setModelCatalog(catalog);
       const ids = catalog.map((m) => m.model_name);
       setModelName((prev) => (ids.length && !ids.includes(prev) ? ids[0] : prev));
@@ -258,6 +258,61 @@ export function CreativeStudioPage() {
     setRefObjectUrl(null);
   }
 
+  async function executeGeneration(imageCount) {
+    const studioCampaign = buildStudioCampaignPayload({
+      campaignGoalId: campaignGoal,
+      platforms,
+      voiceToneLabel,
+      creativityToneLabel: toneLabel,
+      intent,
+    });
+    if (refFile) {
+      const fd = new FormData();
+      fd.append("brand_id", brandId);
+      fd.append("studio_campaign", JSON.stringify(studioCampaign));
+      fd.append("model_name", modelName);
+      fd.append("num_images", String(imageCount));
+      fd.append("aspect_ratio", aspectRatio);
+      if (modelSupportsImageSize(modelCatalog, modelName)) {
+        fd.append("image_size", imageSize);
+      }
+      fd.append("reference_image", refFile);
+      const base = apiBase.replace(/\/+$/, "");
+      if (!apiKey) throw new Error("Configure your API key in Settings.");
+      const res = await fetch(`${base}/api/generate-with-reference`, {
+        method: "POST",
+        headers: { "x-api-key": apiKey },
+        body: fd,
+      });
+      const text = await res.text();
+      let parsed = null;
+      try {
+        parsed = text ? JSON.parse(text) : null;
+      } catch {
+        parsed = text;
+      }
+      if (!res.ok) {
+        const msg =
+          parsed && typeof parsed === "object" && "detail" in parsed
+            ? JSON.stringify(parsed.detail)
+            : text || res.statusText;
+        throw new Error(`${res.status}: ${msg}`);
+      }
+      return parsed;
+    }
+    return client.request("/api/generate", {
+      method: "POST",
+      json: {
+        brand_id: brandId,
+        studio_campaign: studioCampaign,
+        model_name: modelName,
+        num_images: imageCount,
+        aspect_ratio: aspectRatio,
+        image_size: modelSupportsImageSize(modelCatalog, modelName) ? imageSize : undefined,
+      },
+    });
+  }
+
   async function runCampaign() {
     if (!brandId || !brand) return;
     if (!(intent || "").trim()) {
@@ -272,60 +327,7 @@ export function CreativeStudioPage() {
     setPinnedPreviewUrl(null);
     setActiveSourceFilename(null);
     try {
-      const studioCampaign = buildStudioCampaignPayload({
-        campaignGoalId: campaignGoal,
-        platforms,
-        voiceToneLabel,
-        creativityToneLabel: toneLabel,
-        intent,
-      });
-      let data;
-      if (refFile) {
-        const fd = new FormData();
-        fd.append("brand_id", brandId);
-        fd.append("studio_campaign", JSON.stringify(studioCampaign));
-        fd.append("model_name", modelName);
-        fd.append("num_images", String(numImages));
-        fd.append("aspect_ratio", aspectRatio);
-        if (modelSupportsImageSize(modelCatalog, modelName)) {
-          fd.append("image_size", imageSize);
-        }
-        fd.append("reference_image", refFile);
-        const base = apiBase.replace(/\/+$/, "");
-        if (!apiKey) throw new Error("Configure your API key in Settings.");
-        const res = await fetch(`${base}/api/generate-with-reference`, {
-          method: "POST",
-          headers: { "x-api-key": apiKey },
-          body: fd,
-        });
-        const text = await res.text();
-        let parsed = null;
-        try {
-          parsed = text ? JSON.parse(text) : null;
-        } catch {
-          parsed = text;
-        }
-        if (!res.ok) {
-          const msg =
-            parsed && typeof parsed === "object" && "detail" in parsed
-              ? JSON.stringify(parsed.detail)
-              : text || res.statusText;
-          throw new Error(`${res.status}: ${msg}`);
-        }
-        data = parsed;
-      } else {
-        data = await client.request("/api/generate", {
-          method: "POST",
-          json: {
-            brand_id: brandId,
-            studio_campaign: studioCampaign,
-            model_name: modelName,
-            num_images: numImages,
-            aspect_ratio: aspectRatio,
-            image_size: modelSupportsImageSize(modelCatalog, modelName) ? imageSize : undefined,
-          },
-        });
-      }
+      const data = await executeGeneration(numImages);
       const images = data.images || [];
       setResult(data);
       setSessionVersionsFromImages(images);
@@ -346,9 +348,28 @@ export function CreativeStudioPage() {
     aiEditInputRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 
-  function stubRegenerate() {
-    if (!displayUrl) return;
-    toastComingSoon(showToast, "Regenerate");
+  async function regenerate() {
+    if (!displayUrl || !brandId || !brand) return;
+    if (!(intent || "").trim()) {
+      showToast("Add a short prompt—what should this visual communicate?", "error");
+      return;
+    }
+    setRegenerateBusy(true);
+    try {
+      const data = await executeGeneration(1);
+      const images = data.images || [];
+      setResult(data);
+      setPinnedPreviewUrl(null);
+      const fn = images[0]?.filename ?? null;
+      if (fn) setActiveSourceFilename(fn);
+      appendSessionVersions(images);
+      void fetchAndApplySocialCopy(fn);
+      showToast("New variation generated.");
+    } catch (e) {
+      showToast(e.message || String(e), "error");
+    } finally {
+      setRegenerateBusy(false);
+    }
   }
 
   function duplicateCurrent() {
@@ -586,7 +607,7 @@ export function CreativeStudioPage() {
             )}
           </label>
 
-          <button type="button" className="os-generate" onClick={runCampaign} disabled={busy || editBusy || !brandId}>
+          <button type="button" className="os-generate" onClick={runCampaign} disabled={busy || editBusy || regenerateBusy || !brandId}>
             {busy ? "Generating…" : "Generate"}
           </button>
         </aside>
@@ -616,17 +637,22 @@ export function CreativeStudioPage() {
           </div>
 
           <div className="os-toolbar">
-            <button type="button" className="os-tool os-tool--withGlyph" disabled={!displayUrl || editBusy} onClick={stubEditWithAi}>
+            <button type="button" className="os-tool os-tool--withGlyph" disabled={!displayUrl || editBusy || regenerateBusy} onClick={stubEditWithAi}>
               <span className="os-tool-glyph" aria-hidden>
                 <AiAssistantGlyph gradId={studioEditAiGradId} size={18} className="ai-onboard-glyph" />
               </span>
               Edit with AI
             </button>
-            <button type="button" className="os-tool" disabled={!displayUrl} onClick={stubRegenerate}>
+            <button
+              type="button"
+              className="os-tool"
+              disabled={!displayUrl || busy || editBusy || regenerateBusy}
+              onClick={regenerate}
+            >
               <span className="os-tool-ic" aria-hidden>
                 ↻
               </span>
-              Regenerate
+              {regenerateBusy ? "Regenerating…" : "Regenerate"}
             </button>
             <button type="button" className="os-tool" disabled={!displayUrl} onClick={duplicateCurrent}>
               <span className="os-tool-ic" aria-hidden>
@@ -658,15 +684,15 @@ export function CreativeStudioPage() {
               className="os-ai-bar-input"
               value={aiEditHint}
               onChange={(e) => setAiEditHint(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && !editBusy && submitAiEditBar()}
+              onKeyDown={(e) => e.key === "Enter" && !editBusy && !regenerateBusy && submitAiEditBar()}
               placeholder="Try: 'Slightly darker background only' — uses the Model selected at left (Flash or Pro)"
-              disabled={!displayUrl || busy || editBusy}
+              disabled={!displayUrl || busy || editBusy || regenerateBusy}
             />
             <button
               type="button"
               className="os-ai-bar-send"
               onClick={submitAiEditBar}
-              disabled={!displayUrl || busy || editBusy}
+              disabled={!displayUrl || busy || editBusy || regenerateBusy}
               title="Send"
             >
               {editBusy ? "…" : "➤"}
