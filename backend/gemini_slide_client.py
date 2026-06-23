@@ -58,6 +58,7 @@ class GeminiBrandImageClient:
         brand_governance_prompt: str,
         slide_user_prompt: str,
         logo: Image.Image,
+        style_reference: Optional[Image.Image] = None,
         output_file_path: str,
         model_id: str = "gemini-3-pro-image-preview",
         aspect_ratio: str = "1:1",
@@ -79,15 +80,26 @@ class GeminiBrandImageClient:
             f"?key={self._google_api_key}"
         )
 
-        contents = [
-            {
-                "parts": [
-                    {"text": brand_governance_prompt},
-                    {"text": slide_user_prompt},
-                    self._encode_pil_logo_as_gemini_inline_image(logo),
-                ]
-            }
+        parts: list[dict] = [
+            {"text": brand_governance_prompt},
+            {"text": slide_user_prompt},
+            {"text": "BRAND LOGO (use this exact logo in the final design):"},
+            self._encode_pil_logo_as_gemini_inline_image(logo),
         ]
+        if style_reference is not None:
+            parts.extend(
+                [
+                    {
+                        "text": (
+                            "STYLE / LAYOUT REFERENCE (inspiration only; "
+                            "see REFERENCE RULES in the prompt above):"
+                        )
+                    },
+                    self._encode_pil_logo_as_gemini_inline_image(style_reference),
+                ]
+            )
+
+        contents = [{"parts": parts}]
 
         image_config: dict = {"aspectRatio": aspect_ratio}
         if model_id == "gemini-3-pro-image-preview" and image_size:

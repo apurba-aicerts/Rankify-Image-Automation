@@ -806,6 +806,83 @@ async def generate_brand_slides_from_multipart(
     return BrandSlideGenerateResponse.model_validate(raw)
 
 
+@app.post(
+    "/api/generate-with-reference",
+    response_model=BrandSlideGenerateResponse,
+    dependencies=[Depends(require_rankify_api_key)],
+    summary="Generate slides (multipart; optional style/layout reference + optional logo override)",
+)
+async def generate_brand_slides_with_reference(
+    request: Request,
+    brand_id: str = Form(..., description="Brand slug."),
+    studio_campaign: str = Form(..., description="JSON object matching StudioCampaignBrief."),
+    model_name: str = Form("gemini-3-pro-image-preview"),
+    num_images: int = Form(1, ge=1, le=10),
+    aspect_ratio: str = Form("1:1"),
+    image_size: str = Form("2K"),
+    reference_image: Optional[UploadFile] = File(None, description="Optional style/layout inspiration image."),
+    logo: Optional[UploadFile] = File(None, description="Optional logo override for this batch."),
+) -> BrandSlideGenerateResponse:
+    cfg = _load_brand_or_404(brand_id)
+    try:
+        brief = StudioCampaignBrief.model_validate_json(studio_campaign)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid studio_campaign JSON: {exc}") from exc
+
+    structured_post_copy = build_structured_campaign_copy(
+        display_name=cfg.display_name or brand_id,
+        campaign_goal_id=brief.campaign_goal_id,
+        platforms=list(brief.platforms),
+        creativity_tone_label=brief.creativity_tone_label,
+        voice_tone_label=brief.voice_tone_label,
+        intent=brief.intent,
+    )
+
+    logo_override = Image.open(logo.file) if logo else None
+    reference_override = Image.open(reference_image.file) if reference_image else None
+    logger.info(
+        "Generate with reference brand_id=%s model=%s num_images=%s reference=%s logo_override=%s",
+        brand_id,
+        model_name,
+        num_images,
+        bool(reference_image),
+        bool(logo),
+    )
+    try:
+        raw = run_brand_slide_generation(
+            brand_id=brand_id,
+            config=cfg,
+            structured_post_copy=structured_post_copy,
+            model_id=model_name,
+            slide_count=num_images,
+            aspect_ratio=aspect_ratio,
+            image_size=image_size,
+            logo_override=logo_override,
+            logo_fallback_path=DEFAULT_LOGO_PATH,
+            reference_override=reference_override,
+            google_api_key=GOOGLE_API_KEY,
+            openai_api_key=OPENAI_API_KEY,
+            public_origin=_public_api_origin(request),
+            signing_secret=API_KEY,
+            allowed_models=ALLOWED_MODEL_IDS,
+            allowed_ratios=ALLOWED_ASPECT_RATIOS,
+            allowed_sizes=ALLOWED_IMAGE_SIZES,
+        )
+    finally:
+        for img in (logo_override, reference_override):
+            if img is not None:
+                try:
+                    img.close()
+                except Exception:
+                    pass
+    logger.info(
+        "Generate with reference complete brand_id=%s images=%s",
+        brand_id,
+        len(raw.get("images", [])),
+    )
+    return BrandSlideGenerateResponse.model_validate(raw)
+
+
 @app.get(
     "/api/brands/{brand_id}/gallery",
     response_model=GalleryListResponse,

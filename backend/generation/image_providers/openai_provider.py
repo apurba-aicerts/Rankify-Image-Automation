@@ -87,6 +87,19 @@ def _build_edit_kwargs(
     return kwargs
 
 
+def _slide_generate_attachment_note(*, has_style_reference: bool, batch: bool = False) -> str:
+    if has_style_reference:
+        return (
+            "Two attachments: (1) brand_logo.png — use this logo; "
+            "(2) style_reference.png — layout/style inspiration only per REFERENCE RULES in the prompt. "
+            f"Output {'one complete social/marketing slide image per result.' if batch else 'one complete social/marketing slide image.'}"
+        )
+    return (
+        "Use the attached brand logo faithfully in the slide layout. "
+        f"Output {'one complete social/marketing slide image per result.' if batch else 'one complete social/marketing slide image.'}"
+    )
+
+
 def generate_brand_slide_to_file(
     *,
     openai_api_key: str,
@@ -94,6 +107,7 @@ def generate_brand_slide_to_file(
     brand_governance_prompt: str,
     slide_user_prompt: str,
     logo: Image.Image,
+    style_reference: Image.Image | None = None,
     output_file_path: str,
     aspect_ratio: str,
     image_size: str,
@@ -106,15 +120,19 @@ def generate_brand_slide_to_file(
         f"{brand_governance_prompt.strip()}\n\n"
         f"---\n\n"
         f"{slide_user_prompt.strip()}\n\n"
-        "Use the attached brand logo faithfully in the slide layout. "
-        "Output one complete social/marketing slide image."
+        f"{_slide_generate_attachment_note(has_style_reference=style_reference is not None)}"
     )
     logo_bytes = _pil_to_png_bytes(logo)
+    image_bytes_list = [logo_bytes]
+    image_filenames = ["brand_logo.png"]
+    if style_reference is not None:
+        image_bytes_list.append(_pil_to_png_bytes(style_reference))
+        image_filenames.append("style_reference.png")
     kwargs = _build_edit_kwargs(
         api_model=api_model,
         prompt=combined,
-        image_bytes_list=[logo_bytes],
-        image_filenames=["brand_logo.png"],
+        image_bytes_list=image_bytes_list,
+        image_filenames=image_filenames,
         aspect_ratio=aspect_ratio,
         image_size=image_size,
     )
@@ -145,6 +163,7 @@ def generate_brand_slides_b64(
     brand_governance_prompt: str,
     slide_user_prompt: str,
     logo: Image.Image,
+    style_reference: Image.Image | None = None,
     aspect_ratio: str,
     image_size: str,
     n: int,
@@ -160,15 +179,19 @@ def generate_brand_slides_b64(
         f"{brand_governance_prompt.strip()}\n\n"
         f"---\n\n"
         f"{slide_user_prompt.strip()}\n\n"
-        "Use the attached brand logo faithfully in the slide layout. "
-        "Output one complete social/marketing slide image per result."
+        f"{_slide_generate_attachment_note(has_style_reference=style_reference is not None, batch=True)}"
     )
     logo_bytes = _pil_to_png_bytes(logo)
+    image_bytes_list = [logo_bytes]
+    image_filenames = ["brand_logo.png"]
+    if style_reference is not None:
+        image_bytes_list.append(_pil_to_png_bytes(style_reference))
+        image_filenames.append("style_reference.png")
     kwargs = _build_edit_kwargs(
         api_model=api_model,
         prompt=combined,
-        image_bytes_list=[logo_bytes],
-        image_filenames=["brand_logo.png"],
+        image_bytes_list=image_bytes_list,
+        image_filenames=image_filenames,
         aspect_ratio=aspect_ratio,
         image_size=image_size,
     )

@@ -18,7 +18,11 @@ from brands.schemas import BrandConfiguration
 from generation.generation_audit import write_generation_audit_file
 from generation.image_providers import ImageProviderNoOutput, estimate_price_usd, generate_slide_to_file
 from generation.image_providers.registry import model_supports_image_size, normalize_model_id
-from generation.prompt_builder import build_governance_system_prompt, build_slide_user_prompt
+from generation.prompt_builder import (
+    build_governance_system_prompt,
+    build_reference_image_prompt_block,
+    build_slide_user_prompt,
+)
 from gallery_local_store import logical_gallery_key
 from services.brand_assets import resolve_logo_local_path
 from services.gallery_service import build_gallery_view_url, commit_generated_image
@@ -37,6 +41,7 @@ def run_brand_slide_generation(
     image_size: str,
     logo_override: Optional[Image.Image],
     logo_fallback_path: Path,
+    reference_override: Optional[Image.Image] = None,
     google_api_key: str,
     openai_api_key: str,
     public_origin: str,
@@ -88,6 +93,9 @@ def run_brand_slide_generation(
         governance,
     )
     slide_user = build_slide_user_prompt(structured_post_copy, config)
+    if reference_override is not None:
+        slide_user = slide_user + "\n\n" + build_reference_image_prompt_block(config)
+        logger.info("Style reference image attached brand_id=%s", brand_id)
     logger.info("Slide user prompt ready brand_id=%s chars=%s", brand_id, len(slide_user))
     logger.debug(
         "Slide user prompt preview (first 2000 chars) brand_id=%s:\n%s",
@@ -139,6 +147,15 @@ def run_brand_slide_generation(
 
     provider, api_model = normalize_model_id(model_id)
 
+    if reference_override is not None and provider == "imagen":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Style/layout reference images are not supported with Imagen models. "
+                "Use a Gemini or OpenAI image model, or omit the reference image."
+            ),
+        )
+
     def _commit_one(index: int, temp_png_path: str) -> tuple[str, int]:
         filename_local = f"rankify_slide_{batch_id}_{index}.png"
         filename, sz, _ = commit_generated_image(
@@ -171,6 +188,7 @@ def run_brand_slide_generation(
             brand_governance_prompt=governance,
             slide_user_prompt=slide_user,
             logo=logo_image,
+            style_reference=reference_override,
             aspect_ratio=aspect_ratio,
             image_size=image_size,
             n=slide_count,
@@ -297,6 +315,7 @@ def run_brand_slide_generation(
                 brand_governance_prompt=governance,
                 slide_user_prompt=slide_user,
                 logo=logo_image,
+                style_reference=reference_override,
                 output_file_path=temp_png_path,
                 aspect_ratio=aspect_ratio,
                 image_size=image_size,

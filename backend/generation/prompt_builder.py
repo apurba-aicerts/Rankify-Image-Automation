@@ -166,3 +166,24 @@ def build_slide_user_prompt(structured_post_copy: str, cfg: BrandConfiguration) 
     out = "\n\n".join(blocks)
     logger.debug("build_slide_user_prompt brand=%s chars=%s", cfg.display_name, len(out))
     return out
+
+
+def build_reference_image_prompt_block(cfg: BrandConfiguration) -> str:
+    """
+    Instructions when a style/layout reference image is attached alongside the brand logo.
+
+    Appended to the slide user prompt so Gemini and OpenAI see the same rules.
+    """
+    brand = cfg.display_name or "this brand"
+    return (
+        "ATTACHED IMAGES (in order after this text):\n"
+        "1) BRAND LOGO — use this exact logo in the final design.\n"
+        "2) STYLE / LAYOUT REFERENCE — inspiration only.\n\n"
+        "REFERENCE RULES:\n"
+        f"- Match composition, visual hierarchy, spacing rhythm, and general layout structure from the reference.\n"
+        f"- Apply {brand} colors, typography, voice, and governance rules — do NOT copy the reference palette "
+        "if it conflicts with brand rules.\n"
+        "- Use the campaign copy above for all on-image text — do NOT reproduce text from the reference image.\n"
+        "- Do NOT copy third-party logos, watermarks, or trademarks from the reference.\n"
+        f"- The output must read as an official {brand} asset, not a clone of the reference."
+    )

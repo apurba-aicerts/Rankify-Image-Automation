@@ -41,7 +41,7 @@ export function CreativeStudioPage() {
   const { brandId: rawParam } = useParams();
   const brandId = rawParam ? decodeURIComponent(rawParam) : "";
   const navigate = useNavigate();
-  const { client, showToast } = useApp();
+  const { client, showToast, apiBase, apiKey } = useApp();
   const studioEditAiGradId = `studio-edit-ai-${useId().replace(/:/g, "")}`;
 
   const [brand, setBrand] = useState(null);
@@ -68,6 +68,7 @@ export function CreativeStudioPage() {
   const [pinnedPreviewUrl, setPinnedPreviewUrl] = useState(null);
   const [artifactHistory, setArtifactHistory] = useState([]);
   const [aiEditHint, setAiEditHint] = useState("");
+  const [refFile, setRefFile] = useState(null);
   const [refObjectUrl, setRefObjectUrl] = useState(null);
   const [editBusy, setEditBusy] = useState(false);
   const [activeSourceFilename, setActiveSourceFilename] = useState(null);
@@ -244,9 +245,17 @@ export function CreativeStudioPage() {
     const file = ev.target.files?.[0];
     if (!file) return;
     if (refObjectUrl) URL.revokeObjectURL(refObjectUrl);
-    const u = URL.createObjectURL(file);
-    setRefObjectUrl(u);
-    toastComingSoon(showToast, "Reference image in generation");
+    setRefFile(file);
+    setRefObjectUrl(URL.createObjectURL(file));
+    ev.target.value = "";
+  }
+
+  function clearReference(ev) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (refObjectUrl) URL.revokeObjectURL(refObjectUrl);
+    setRefFile(null);
+    setRefObjectUrl(null);
   }
 
   async function runCampaign() {
@@ -263,21 +272,60 @@ export function CreativeStudioPage() {
     setPinnedPreviewUrl(null);
     setActiveSourceFilename(null);
     try {
-      const body = {
-        brand_id: brandId,
-        studio_campaign: buildStudioCampaignPayload({
-          campaignGoalId: campaignGoal,
-          platforms,
-          voiceToneLabel,
-          creativityToneLabel: toneLabel,
-          intent,
-        }),
-        model_name: modelName,
-        num_images: numImages,
-        aspect_ratio: aspectRatio,
-        image_size: modelSupportsImageSize(modelCatalog, modelName) ? imageSize : undefined,
-      };
-      const data = await client.request("/api/generate", { method: "POST", json: body });
+      const studioCampaign = buildStudioCampaignPayload({
+        campaignGoalId: campaignGoal,
+        platforms,
+        voiceToneLabel,
+        creativityToneLabel: toneLabel,
+        intent,
+      });
+      let data;
+      if (refFile) {
+        const fd = new FormData();
+        fd.append("brand_id", brandId);
+        fd.append("studio_campaign", JSON.stringify(studioCampaign));
+        fd.append("model_name", modelName);
+        fd.append("num_images", String(numImages));
+        fd.append("aspect_ratio", aspectRatio);
+        if (modelSupportsImageSize(modelCatalog, modelName)) {
+          fd.append("image_size", imageSize);
+        }
+        fd.append("reference_image", refFile);
+        const base = apiBase.replace(/\/+$/, "");
+        if (!apiKey) throw new Error("Configure your API key in Settings.");
+        const res = await fetch(`${base}/api/generate-with-reference`, {
+          method: "POST",
+          headers: { "x-api-key": apiKey },
+          body: fd,
+        });
+        const text = await res.text();
+        let parsed = null;
+        try {
+          parsed = text ? JSON.parse(text) : null;
+        } catch {
+          parsed = text;
+        }
+        if (!res.ok) {
+          const msg =
+            parsed && typeof parsed === "object" && "detail" in parsed
+              ? JSON.stringify(parsed.detail)
+              : text || res.statusText;
+          throw new Error(`${res.status}: ${msg}`);
+        }
+        data = parsed;
+      } else {
+        data = await client.request("/api/generate", {
+          method: "POST",
+          json: {
+            brand_id: brandId,
+            studio_campaign: studioCampaign,
+            model_name: modelName,
+            num_images: numImages,
+            aspect_ratio: aspectRatio,
+            image_size: modelSupportsImageSize(modelCatalog, modelName) ? imageSize : undefined,
+          },
+        });
+      }
       const images = data.images || [];
       setResult(data);
       setSessionVersionsFromImages(images);
@@ -526,7 +574,16 @@ export function CreativeStudioPage() {
 
           <label className="os-dropzone">
             <input type="file" accept="image/*" className="os-dropzone-input" onChange={onReferenceFile} />
-            <span className="os-dropzone-text">Upload reference image</span>
+            {refObjectUrl ? (
+              <>
+                <img src={refObjectUrl} alt="Reference preview" className="os-dropzone-preview" />
+                <button type="button" className="os-dropzone-clear" onClick={clearReference}>
+                  Remove
+                </button>
+              </>
+            ) : (
+              <span className="os-dropzone-text">Upload reference image (optional)</span>
+            )}
           </label>
 
           <button type="button" className="os-generate" onClick={runCampaign} disabled={busy || editBusy || !brandId}>
