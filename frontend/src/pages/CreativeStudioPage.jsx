@@ -4,7 +4,6 @@ import { AiAssistantGlyph } from "../components/AiAssistantGlyph.jsx";
 import { useApp } from "../context/AppContext.jsx";
 import { buildStudioCampaignPayload } from "../lib/campaignAssembler.js";
 import {
-  CAMPAIGN_GOALS,
   PROMPT_ASSIST_SNIPPETS,
   STUDIO_PLATFORMS,
   STUDIO_VOICE_TONES,
@@ -54,7 +53,6 @@ export function CreativeStudioPage() {
   const [imageSize, setImageSize] = useState("1K");
   const [numImages, setNumImages] = useState(1);
 
-  const [campaignGoal, setCampaignGoal] = useState("brand_awareness");
   const [voiceToneId, setVoiceToneId] = useState("professional");
   const [platforms, setPlatforms] = useState(["linkedin"]);
   const [toneBias, setToneBias] = useState(50);
@@ -109,7 +107,6 @@ export function CreativeStudioPage() {
     async (imageFilename) => {
       if (!brandId || !brand || !imageFilename) return;
       const studio_campaign = buildStudioCampaignPayload({
-        campaignGoalId: campaignGoal,
         platforms,
         voiceToneLabel,
         creativityToneLabel: toneLabel,
@@ -126,7 +123,6 @@ export function CreativeStudioPage() {
         const cap = buildCaptionHashtagDraft({
           displayName: brand.display_name || brandId,
           intent,
-          goalLabel: CAMPAIGN_GOALS.find((g) => g.id === campaignGoal)?.label || "Campaign",
           platforms,
         });
         setCaptionText(cap.caption);
@@ -134,17 +130,7 @@ export function CreativeStudioPage() {
         showToast(e.message || String(e), "error");
       }
     },
-    [
-      brand,
-      brandId,
-      campaignGoal,
-      client,
-      intent,
-      platforms,
-      showToast,
-      toneLabel,
-      voiceToneLabel,
-    ],
+    [brand, brandId, client, intent, platforms, showToast, toneLabel, voiceToneLabel],
   );
 
   const enforcement = useMemo(() => {
@@ -260,7 +246,6 @@ export function CreativeStudioPage() {
 
   async function executeGeneration(imageCount) {
     const studioCampaign = buildStudioCampaignPayload({
-      campaignGoalId: campaignGoal,
       platforms,
       voiceToneLabel,
       creativityToneLabel: toneLabel,
@@ -483,17 +468,6 @@ export function CreativeStudioPage() {
               ))}
             </div>
           </div>
-
-          <label className="os-field">
-            <span className="os-label">Campaign objective</span>
-            <select className="os-select" value={campaignGoal} onChange={(e) => setCampaignGoal(e.target.value)}>
-              {CAMPAIGN_GOALS.map((g) => (
-                <option key={g.id} value={g.id}>
-                  {g.label}
-                </option>
-              ))}
-            </select>
-          </label>
 
           <div className="os-field">
             <span className="os-label">Platform</span>

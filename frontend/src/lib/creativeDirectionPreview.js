@@ -55,8 +55,8 @@ export function buildSocialIntelligenceTips({ platforms, campaignGoalId }) {
   return tips.slice(0, 5);
 }
 
-export function buildCaptionHashtagDraft({ displayName, intent, goalLabel, platforms }) {
-  const cap = `${displayName} — ${goalLabel}. ${(intent || "").slice(0, 200)}${(intent || "").length > 200 ? "…" : ""}`.trim();
+export function buildCaptionHashtagDraft({ displayName, intent, platforms }) {
+  const cap = `${displayName} — ${(intent || "").slice(0, 220)}${(intent || "").length > 220 ? "…" : ""}`.trim();
   const tags = ["#Brand", "#Marketing", "#SocialFirst"];
   (platforms || []).forEach((p) => {
     const t = p.replace(/\s+/g, "");

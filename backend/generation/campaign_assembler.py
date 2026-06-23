@@ -1,11 +1,16 @@
 """
-Assemble TITLE / SUBTITLE / BODY / CTA structured post copy for slide generation.
+Structured post copy for social-caption generation.
 
-Canonical logic for the Creative Studio lives here so prompts stay consistent regardless
-of which client calls ``POST /api/generate``. Legacy clients may still send raw ``content``.
+Image generation passes the marketer ``intent`` verbatim via ``user_brief_for_image_generation``.
 """
 
 from __future__ import annotations
+
+
+def user_brief_for_image_generation(intent: str) -> str:
+    """Return the Creative Studio prompt unchanged for image generation."""
+    return (intent or "").strip()
+
 
 PLATFORM_LABELS: dict[str, str] = {
     "linkedin": "LinkedIn",

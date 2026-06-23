@@ -1,16 +1,17 @@
 /**
  * Build the `studio_campaign` object for POST /api/generate.
- * TITLE / SUBTITLE / BODY / CTA assembly runs on the server (`generation.campaign_assembler`).
+ * Image generation uses `intent` verbatim on the server; assembly below is for social-copy context.
  */
+const DEFAULT_CAMPAIGN_GOAL_ID = "brand_awareness";
+
 export function buildStudioCampaignPayload({
-  campaignGoalId,
   platforms,
   voiceToneLabel,
   creativityToneLabel,
   intent,
 }) {
   return {
-    campaign_goal_id: campaignGoalId,
+    campaign_goal_id: DEFAULT_CAMPAIGN_GOAL_ID,
     platforms: (platforms || []).filter(Boolean).map((p) => String(p).toLowerCase()),
     voice_tone_label: (voiceToneLabel || "Professional").trim() || "Professional",
     creativity_tone_label: creativityToneLabel,

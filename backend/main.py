@@ -45,7 +45,7 @@ from brands.schemas import (
     validate_brand_id,
 )
 from gallery_url_signing import verify_brand_gallery_image_view_signature
-from generation.campaign_assembler import build_structured_campaign_copy
+from generation.campaign_assembler import build_structured_campaign_copy, user_brief_for_image_generation
 from generation.image_edit_pipeline import run_gallery_image_edit
 from generation.openai_social_copy_service import generate_social_copy_openai
 from generation.image_providers.registry import ALLOWED_IMAGE_MODEL_IDS, models_list_payload
@@ -196,9 +196,12 @@ async def require_rankify_api_key(
 
 
 class StudioCampaignBrief(BaseModel):
-    """Fields from the Creative Studio; server turns this into structured TITLE/SUBTITLE/BODY/CTA."""
+    """Fields from the Creative Studio prompt and studio controls."""
 
-    campaign_goal_id: str = Field(..., description="e.g. hiring, webinar, cert_launch")
+    campaign_goal_id: str = Field(
+        default="brand_awareness",
+        description="Legacy field for social-copy assembly; studio UI no longer sets this.",
+    )
     platforms: list[str] = Field(
         default_factory=list,
         description="Lowercase ids: linkedin, instagram, …",
@@ -702,16 +705,8 @@ async def generate_brand_slides_from_json(
 ) -> BrandSlideGenerateResponse:
     cfg = _load_brand_or_404(body.brand_id)
     if body.studio_campaign is not None:
-        sc = body.studio_campaign
-        structured_post_copy = build_structured_campaign_copy(
-            display_name=cfg.display_name or body.brand_id,
-            campaign_goal_id=sc.campaign_goal_id,
-            platforms=list(sc.platforms),
-            creativity_tone_label=sc.creativity_tone_label,
-            voice_tone_label=sc.voice_tone_label,
-            intent=sc.intent,
-        )
-        logger.debug("Using server-assembled studio_campaign structured copy for brand_id=%s", body.brand_id)
+        structured_post_copy = user_brief_for_image_generation(body.studio_campaign.intent)
+        logger.debug("Using verbatim studio_campaign intent for brand_id=%s", body.brand_id)
     else:
         structured_post_copy = (body.content or "").strip()
     logger.info(
@@ -829,14 +824,7 @@ async def generate_brand_slides_with_reference(
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid studio_campaign JSON: {exc}") from exc
 
-    structured_post_copy = build_structured_campaign_copy(
-        display_name=cfg.display_name or brand_id,
-        campaign_goal_id=brief.campaign_goal_id,
-        platforms=list(brief.platforms),
-        creativity_tone_label=brief.creativity_tone_label,
-        voice_tone_label=brief.voice_tone_label,
-        intent=brief.intent,
-    )
+    structured_post_copy = user_brief_for_image_generation(brief.intent)
 
     logo_override = Image.open(logo.file) if logo else None
     reference_override = Image.open(reference_image.file) if reference_image else None

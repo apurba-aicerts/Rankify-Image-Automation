@@ -15,6 +15,8 @@ from typing import Optional
 import requests
 from PIL import Image
 
+from generation.prompt_builder import LOGO_ATTACHMENT_INSTRUCTION
+
 logger = logging.getLogger(__name__)
 
 
@@ -83,7 +85,7 @@ class GeminiBrandImageClient:
         parts: list[dict] = [
             {"text": brand_governance_prompt},
             {"text": slide_user_prompt},
-            {"text": "BRAND LOGO (use this exact logo in the final design):"},
+            {"text": LOGO_ATTACHMENT_INSTRUCTION},
             self._encode_pil_logo_as_gemini_inline_image(logo),
         ]
         if style_reference is not None:

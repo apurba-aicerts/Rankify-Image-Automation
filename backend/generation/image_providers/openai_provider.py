@@ -11,6 +11,7 @@ from PIL import Image
 
 from generation.image_providers.exceptions import ImageProviderNoOutput
 from generation.image_providers.openai_sizes import openai_size_for_aspect, openai_size_for_gallery_edit
+from generation.prompt_builder import LOGO_ATTACHMENT_INSTRUCTION
 
 logger = logging.getLogger(__name__)
 
@@ -89,14 +90,33 @@ def _build_edit_kwargs(
 
 def _slide_generate_attachment_note(*, has_style_reference: bool, batch: bool = False) -> str:
     if has_style_reference:
-        return (
-            "Two attachments: (1) brand_logo.png — use this logo; "
-            "(2) style_reference.png — layout/style inspiration only per REFERENCE RULES in the prompt. "
-            f"Output {'one complete social/marketing slide image per result.' if batch else 'one complete social/marketing slide image.'}"
+        files = (
+            "Attached files: (1) brand_logo.png — brand mark; "
+            "(2) style_reference.png — layout/style inspiration only (see REFERENCE RULES above)."
         )
+    else:
+        files = "Attached file: brand_logo.png — brand mark."
+    output = (
+        "Output one complete social/marketing slide image per result."
+        if batch
+        else "Output one complete social/marketing slide image."
+    )
+    return f"{files}\n{output}"
+
+
+def _build_slide_generate_prompt(
+    *,
+    brand_governance_prompt: str,
+    slide_user_prompt: str,
+    has_style_reference: bool,
+    batch: bool = False,
+) -> str:
     return (
-        "Use the attached brand logo faithfully in the slide layout. "
-        f"Output {'one complete social/marketing slide image per result.' if batch else 'one complete social/marketing slide image.'}"
+        f"{brand_governance_prompt.strip()}\n\n"
+        f"---\n\n"
+        f"{slide_user_prompt.strip()}\n\n"
+        f"{LOGO_ATTACHMENT_INSTRUCTION}\n\n"
+        f"{_slide_generate_attachment_note(has_style_reference=has_style_reference, batch=batch)}"
     )
 
 
@@ -116,11 +136,10 @@ def generate_brand_slide_to_file(
     Generate a branded slide using the logo as a reference image (Images API edit workflow).
     """
     client = OpenAI(api_key=openai_api_key)
-    combined = (
-        f"{brand_governance_prompt.strip()}\n\n"
-        f"---\n\n"
-        f"{slide_user_prompt.strip()}\n\n"
-        f"{_slide_generate_attachment_note(has_style_reference=style_reference is not None)}"
+    combined = _build_slide_generate_prompt(
+        brand_governance_prompt=brand_governance_prompt,
+        slide_user_prompt=slide_user_prompt,
+        has_style_reference=style_reference is not None,
     )
     logo_bytes = _pil_to_png_bytes(logo)
     image_bytes_list = [logo_bytes]
@@ -175,11 +194,11 @@ def generate_brand_slides_b64(
         raise ValueError("OpenAI image batch n must be <= 10")
 
     client = OpenAI(api_key=openai_api_key)
-    combined = (
-        f"{brand_governance_prompt.strip()}\n\n"
-        f"---\n\n"
-        f"{slide_user_prompt.strip()}\n\n"
-        f"{_slide_generate_attachment_note(has_style_reference=style_reference is not None, batch=True)}"
+    combined = _build_slide_generate_prompt(
+        brand_governance_prompt=brand_governance_prompt,
+        slide_user_prompt=slide_user_prompt,
+        has_style_reference=style_reference is not None,
+        batch=True,
     )
     logo_bytes = _pil_to_png_bytes(logo)
     image_bytes_list = [logo_bytes]
