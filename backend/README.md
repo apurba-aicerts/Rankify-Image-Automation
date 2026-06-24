@@ -90,7 +90,7 @@ backend/
 |--------|----------------|
 | `main.py` | HTTP surface: brands CRUD, bootstrap, generate, brand gallery, CORS, TTL task. |
 | `brands/*` | Pydantic config model, JSON repository, demo seed content. |
-| `generation/prompt_builder.py` | Builds system + user prompts from `BrandConfiguration` (governance body, optional layout/CTA/visual/avoid modules, structured JSON summary). |
+| `generation/prompt_builder.py` | Builds system + user prompts from `BrandConfiguration` (governance body, layout/CTA/visual/avoid modules, visual-only brand reference). |
 | `generation/slide_pipeline.py` | Validates model params, runs selected provider, saves under `generated-images/<brand_id>/`. |
 | `generation/openai_social_copy_service.py` | OpenAI structured caption + hashtags from brand config + studio brief; optional gallery image (vision). |
 | `generation/text_stubs.py` | Legacy helpers / doc hooks for text pipelines. |

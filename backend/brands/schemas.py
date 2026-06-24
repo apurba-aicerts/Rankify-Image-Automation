@@ -96,7 +96,8 @@ class BrandTextPreferences(BaseModel):
 class BrandGenerationRules(BaseModel):
     """
     Prompt and layout rules. ``governance_prompt_template`` is the main system prompt
-    (brand law). Optional structured fields are folded into prompts by :mod:`generation.prompt_builder`.
+    (brand law). Optional structured layout/visual fields are folded into prompts by
+    :mod:`generation.prompt_builder` (visual-only; social copy fields are excluded).
     """
 
     governance_prompt_template: str = Field(

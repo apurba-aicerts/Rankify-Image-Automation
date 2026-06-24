@@ -90,12 +90,9 @@ def _build_edit_kwargs(
 
 def _slide_generate_attachment_note(*, has_style_reference: bool, batch: bool = False) -> str:
     if has_style_reference:
-        files = (
-            "Attached files: (1) brand_logo.png — brand mark; "
-            "(2) style_reference.png — layout/style inspiration only (see REFERENCE RULES above)."
-        )
+        files = "Attached: (1) brand_logo.png (2) style_reference.png"
     else:
-        files = "Attached file: brand_logo.png — brand mark."
+        files = "Attached: brand_logo.png"
     output = (
         "Output one complete social/marketing slide image per result."
         if batch

@@ -16,3 +16,4 @@ frontend/dist/
 logos/
 backend/scripts/setup_rankify_db.sql
 backend/scripts/test_db_connection.py
+backend/tests/
