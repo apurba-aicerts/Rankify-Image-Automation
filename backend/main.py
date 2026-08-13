@@ -990,7 +990,11 @@ async def stream_brand_gallery_image(brand_id: str, filename: str, exp: int, sig
         raise HTTPException(status_code=404, detail="Image not found.")
     path = resolve_gallery_local_path(brand_id, filename)
     logger.debug("Gallery raw served brand_id=%s filename=%s", brand_id, filename)
-    return FileResponse(path, media_type=_http_media_type_for_image_filename(filename))
+    return FileResponse(
+        path,
+        media_type=_http_media_type_for_image_filename(filename),
+        filename=filename,
+    )
 
 
 @app.delete(

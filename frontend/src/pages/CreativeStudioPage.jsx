@@ -14,6 +14,7 @@ import { enforcementFromBrand } from "../lib/brandEnforcementPreview.js";
 import {
   buildCaptionHashtagDraft,
 } from "../lib/creativeDirectionPreview.js";
+import { downloadImageFromUrl } from "../lib/downloadImage.js";
 import { filterStudioImageModels, modelOptionLabel, modelSupportsImageSize } from "../lib/modelCatalog.js";
 import "../styles/studio.css";
 
@@ -69,6 +70,7 @@ export function CreativeStudioPage() {
   const [refFile, setRefFile] = useState(null);
   const [refObjectUrl, setRefObjectUrl] = useState(null);
   const [editBusy, setEditBusy] = useState(false);
+  const [downloadBusy, setDownloadBusy] = useState(false);
   const [activeSourceFilename, setActiveSourceFilename] = useState(null);
   const aiEditInputRef = useRef(null);
 
@@ -368,6 +370,32 @@ export function CreativeStudioPage() {
     showToast("Duplicate saved to versions.");
   }
 
+  function resolveDisplayFilename() {
+    const fromHistory = artifactHistory.find((a) => a.url === displayUrl);
+    return (
+      fromHistory?.filename ??
+      (displayUrl === primaryUrl ? result?.images?.[0]?.filename : null) ??
+      activeSourceFilename ??
+      "rankify_image.png"
+    );
+  }
+
+  async function downloadCurrentImage() {
+    if (!displayUrl || downloadBusy) return;
+    setDownloadBusy(true);
+    try {
+      await downloadImageFromUrl({
+        url: displayUrl,
+        filename: resolveDisplayFilename(),
+      });
+      showToast("Image downloaded.");
+    } catch (e) {
+      showToast(e.message || String(e), "error");
+    } finally {
+      setDownloadBusy(false);
+    }
+  }
+
   async function submitAiEditBar() {
     const t = (aiEditHint || "").trim();
     if (!t) {
@@ -635,12 +663,17 @@ export function CreativeStudioPage() {
               Duplicate
             </button>
             {displayUrl ? (
-              <a className="os-tool os-tool--link" href={displayUrl} download target="_blank" rel="noreferrer">
+              <button
+                type="button"
+                className="os-tool"
+                disabled={downloadBusy}
+                onClick={downloadCurrentImage}
+              >
                 <span className="os-tool-ic" aria-hidden>
                   ⬇
                 </span>
-                Download
-              </a>
+                {downloadBusy ? "Downloading…" : "Download"}
+              </button>
             ) : (
               <button type="button" className="os-tool" disabled>
                 <span className="os-tool-ic" aria-hidden>
