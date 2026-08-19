@@ -68,6 +68,47 @@ def brand_has_logo(brand_id: str, configured_filename: str) -> bool:
     return resolve_logo_local_path(brand_id, configured_filename) is not None
 
 
+def build_logo_view_url(
+    *,
+    brand_id: str,
+    configured_filename: str,
+    public_origin: str,
+    signing_secret: str,
+) -> str | None:
+    """
+    Temporary URL to view the brand logo, or None if no file exists.
+
+    S3: presigned GET. Local: HMAC URL to /api/brands/{id}/assets/logo/raw.
+    """
+    from brands.repository import BRAND_DATA_DIR
+    from gallery_url_signing import GALLERY_IMAGE_URL_TTL_SECONDS, build_brand_logo_view_url
+
+    if s3_enabled():
+        if database_enabled():
+            row = _asset_repo.get_primary_logo(brand_id)
+            if row is None:
+                return None
+            object_key = row.object_key
+        else:
+            object_key = s3_client.brand_asset_object_key(brand_id, configured_filename)
+            if not s3_client.object_exists(object_key):
+                return None
+        return s3_client.presigned_get_url(object_key)
+
+    safe_name = Path(configured_filename or "logo.png").name
+    path = BRAND_DATA_DIR / brand_id / "assets" / safe_name
+    if not path.is_file():
+        return None
+    if not signing_secret:
+        return None
+    return build_brand_logo_view_url(
+        public_api_origin=public_origin,
+        signing_secret=signing_secret,
+        brand_id=brand_id,
+        ttl_seconds=GALLERY_IMAGE_URL_TTL_SECONDS,
+    )
+
+
 def resolve_logo_local_path(brand_id: str, configured_filename: str) -> Path | None:
     """Local path for PIL/open; None if no logo configured."""
     from brands.repository import BrandRepository

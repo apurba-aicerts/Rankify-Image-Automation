@@ -24,7 +24,7 @@ from typing import Optional
 
 from dotenv import load_dotenv
 
-from brands.schemas import BrandConfiguration, BrandSummary, validate_brand_id
+from brands.schemas import BrandConfiguration, validate_brand_id
 
 load_dotenv()
 
@@ -85,10 +85,10 @@ class BrandRepository:
             shutil.rmtree(path, ignore_errors=True)
             logger.info("Deleted brand directory brand_id=%s", bid)
 
-    def list_summaries(self) -> list[BrandSummary]:
+    def list_summaries(self) -> list[BrandConfiguration]:
         if not self._root.is_dir():
             return []
-        out: list[BrandSummary] = []
+        out: list[BrandConfiguration] = []
         for child in sorted(self._root.iterdir()):
             if not child.is_dir():
                 continue
@@ -100,16 +100,9 @@ class BrandRepository:
             if not cfg_path.is_file():
                 continue
             try:
-                cfg = self.load(bid)
+                out.append(self.load(bid))
             except (json.JSONDecodeError, OSError, ValueError):
                 continue
-            out.append(
-                BrandSummary(
-                    brand_id=cfg.brand_id,
-                    display_name=cfg.display_name,
-                    updated_at=cfg.updated_at,
-                )
-            )
         return out
 
     def logo_path(self, brand_id: str) -> Path:
