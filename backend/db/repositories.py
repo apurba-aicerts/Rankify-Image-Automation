@@ -10,7 +10,7 @@ from typing import Optional
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from brands.schemas import BrandConfiguration, BrandSummary, validate_brand_id
+from brands.schemas import BrandConfiguration, validate_brand_id
 from db.models import BrandAssetRow, BrandRow, GeneratedImageRow, SocialCopyRow
 from db.session import session_scope
 from gallery_local_store import GalleryFileMetadata
@@ -55,20 +55,10 @@ class BrandDbRepository:
             if row is not None:
                 session.delete(row)
 
-    def list_summaries(self) -> list[BrandSummary]:
+    def list_summaries(self) -> list[BrandConfiguration]:
         with session_scope() as session:
             rows = session.scalars(select(BrandRow).order_by(BrandRow.brand_id)).all()
-            out: list[BrandSummary] = []
-            for row in rows:
-                cfg = BrandConfiguration.model_validate(row.config)
-                out.append(
-                    BrandSummary(
-                        brand_id=cfg.brand_id,
-                        display_name=cfg.display_name,
-                        updated_at=cfg.updated_at or row.updated_at,
-                    )
-                )
-            return out
+            return [BrandConfiguration.model_validate(row.config) for row in rows]
 
     def list_brand_ids(self) -> list[str]:
         return [s.brand_id for s in self.list_summaries()]

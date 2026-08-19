@@ -122,6 +122,24 @@ def list_gallery_metadata(brand_id: str) -> list[GalleryFileMetadata]:
     return list_gallery_files_with_metadata(brand_id)
 
 
+def gallery_stats_for_brand(brand_id: str) -> dict[str, int]:
+    """Counts only — does not build image URLs."""
+    try:
+        rows = list_gallery_metadata(brand_id)
+    except OSError:
+        logger.warning("Gallery stats failed brand_id=%s", brand_id, exc_info=True)
+        return {"total": 0, "last_7_days": 0}
+    now = datetime.now(timezone.utc)
+    last_7_days = 0
+    for meta in rows:
+        lm = meta.last_modified_utc
+        if lm.tzinfo is None:
+            lm = lm.replace(tzinfo=timezone.utc)
+        if (now - lm).total_seconds() / 3600 <= 168:
+            last_7_days += 1
+    return {"total": len(rows), "last_7_days": last_7_days}
+
+
 def delete_gallery_image(brand_id: str, filename: str) -> None:
     validate_gallery_filename(filename)
     object_key: Optional[str] = None

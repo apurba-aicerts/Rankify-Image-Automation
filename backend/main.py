@@ -41,10 +41,12 @@ from brands.schemas import (
     BrandAiDraftResponse,
     BrandConfiguration,
     BrandCreatePayload,
-    BrandSummary,
     validate_brand_id,
 )
-from gallery_url_signing import verify_brand_gallery_image_view_signature
+from gallery_url_signing import (
+    verify_brand_gallery_image_view_signature,
+    verify_brand_logo_view_signature,
+)
 from generation.campaign_assembler import build_structured_campaign_copy, user_brief_for_image_generation
 from generation.image_edit_pipeline import run_gallery_image_edit
 from generation.openai_social_copy_service import generate_social_copy_openai
@@ -57,11 +59,12 @@ from gallery_local_store import (
     logical_gallery_key,
     validate_gallery_filename,
 )
-from services.brand_assets import resolve_logo_local_path, save_logo_upload
+from services.brand_assets import build_logo_view_url, resolve_logo_local_path, save_logo_upload
 from services.gallery_service import (
     build_gallery_view_url,
     delete_gallery_image,
     gallery_image_exists,
+    gallery_stats_for_brand,
     list_gallery_metadata,
     purge_all_galleries_older_than_hours,
     resolve_gallery_local_path,
@@ -451,11 +454,23 @@ async def read_health_status() -> dict:
     dependencies=[Depends(require_rankify_api_key)],
     summary="List onboarded brands",
 )
-async def list_brands() -> dict:
+async def list_brands(request: Request) -> dict:
     repo = get_brand_repository()
-    summaries: list[BrandSummary] = repo.list_summaries()
-    logger.debug("Listed brands count=%s", len(summaries))
-    return {"brands": [s.model_dump(mode="json") for s in summaries], "total": len(summaries)}
+    configs: list[BrandConfiguration] = repo.list_summaries()
+    public_origin = _public_api_origin(request)
+    brands_out: list[dict] = []
+    for cfg in configs:
+        item = cfg.model_dump(mode="json")
+        item["logo_url"] = build_logo_view_url(
+            brand_id=cfg.brand_id,
+            configured_filename=cfg.logo_asset_filename,
+            public_origin=public_origin,
+            signing_secret=API_KEY,
+        )
+        item["gallery_stats"] = gallery_stats_for_brand(cfg.brand_id)
+        brands_out.append(item)
+    logger.debug("Listed brands count=%s", len(brands_out))
+    return {"brands": brands_out, "total": len(brands_out)}
 
 
 @app.post(
@@ -634,6 +649,30 @@ async def upload_brand_logo(
     summary="Download configured logo file (if present)",
 )
 async def get_brand_logo(brand_id: str) -> FileResponse:
+    cfg = _load_brand_or_404(brand_id)
+    path = resolve_logo_local_path(brand_id, cfg.logo_asset_filename)
+    if path is None or not path.is_file():
+        raise HTTPException(status_code=404, detail="No logo file for this brand yet.")
+    return FileResponse(path, media_type=_http_media_type_for_image_filename(path.name))
+
+
+@app.get("/api/brands/{brand_id}/assets/logo/raw")
+async def stream_brand_logo(brand_id: str, exp: int, sig: str) -> FileResponse:
+    brand_id = unquote(brand_id)
+    try:
+        validate_brand_id(brand_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid brand_id.")
+    if not API_KEY:
+        raise HTTPException(status_code=500, detail="API_KEY is not configured.")
+    if not verify_brand_logo_view_signature(
+        signing_secret=API_KEY,
+        brand_id=brand_id,
+        exp=exp,
+        sig=sig,
+    ):
+        logger.warning("Logo raw denied: invalid or expired signature brand_id=%s exp=%s", brand_id, exp)
+        raise HTTPException(status_code=401, detail="Invalid or expired signature.")
     cfg = _load_brand_or_404(brand_id)
     path = resolve_logo_local_path(brand_id, cfg.logo_asset_filename)
     if path is None or not path.is_file():
