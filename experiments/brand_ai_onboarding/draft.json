@@ -1,0 +1,84 @@
+{
+  "brand_id": "1ae2effd-c2cf-4626-b9db-82cdf4febe79",
+  "display_name": "AI CERTs",
+  "tagline": "Certification for the Future",
+  "legal_suffix": "Inc.",
+  "colors": {
+    "primary": [
+      "#CFA935",
+      "#F4F4F4"
+    ],
+    "secondary": [
+      "#E4E4E4",
+      "#4D5060",
+      "#098A7D",
+      "#072557",
+      "#1A1A2E",
+      "#0056B3",
+      "#176C90"
+    ],
+    "usage_rules": "Use gold (#CFA935) for highlights, buttons, key words."
+  },
+  "typography": {
+    "primary_font": "Open Sans",
+    "headline_font": "Montserrat Bold/ExtraBold",
+    "body_font": "Poppins Regular/SemiBold",
+    "notes": "Headlines in Montserrat, subheadings in Montserrat Medium, body in Poppins. Important keywords in gold (#CFA935)."
+  },
+  "voice": {
+    "tone_keywords": [
+      "Professional",
+      "Modern",
+      "Educational",
+      "Trust-driven",
+      "Industry-expert"
+    ],
+    "writing_style": "Short, high-impact statements with gold highlights. Use real, human-focused storytelling.",
+    "target_audience": "Professionals looking to upskill and certify in AI technologies."
+  },
+  "social_defaults": {
+    "preferred_platforms": [
+      "instagram",
+      "linkedin"
+    ],
+    "default_aspect_ratio": "1:1",
+    "default_image_size": "1080x1080"
+  },
+  "platform_hints": {
+    "hints": {
+      "instagram": "Use carousel posts with a size of 1080x1080px, ensuring the logo is always top-left.",
+      "linkedin": "Focus on professional tone and high-quality imagery with strong CTAs."
+    }
+  },
+  "content_themes": {
+    "categories": [
+      "Professional Development",
+      "AI Certification",
+      "Skill Enhancement"
+    ],
+    "recurring_themes": [
+      "Future-Proofing Careers",
+      "Human-Focused Storytelling",
+      "AI Industry Insights"
+    ]
+  },
+  "text_preferences": {
+    "hashtag_style": "Branded and professional, up to 5 per post.",
+    "caption_style": "Concise and impactful, with a strong CTA.",
+    "banned_phrases": [
+      "Unverified",
+      "Cheap certification"
+    ]
+  },
+  "generation": {
+    "governance_prompt_template": "Always adhere to AI CERTs guidelines. Use #CFA935 for highlights, rectangle buttons with round edges, and display the logo in the top-left. Apply Open Sans and Montserrat for text, with professional, educational, and industry-expert tone. Ensure high-quality imagery with modern tech visuals and dark gradients.",
+    "design_guidelines": "Use circular/rounded icons, dark gradients with Navy and Gold, and clean white backgrounds for concept explanations.",
+    "layout_spacing_rules": "Image spacing should be 80px on all sides.",
+    "cta_button_rules": "Rectangle buttons with round edges in golden or white with black border. Typical texts: 'Enroll Now', 'Book Your Seat'.",
+    "visual_style_rules": "Dark modern gradients, high-quality professional imagery, modern tech visuals, and glowing spheres.",
+    "avoid_rules": "Avoid using unauthorized colors and fonts. Do not place the logo anywhere but top-left.",
+    "slide_intro_template": "Presenting AI CERTs: Innovate and Certify for Tomorrow",
+    "slide_user_prompt_suffix": "Remember: Gold highlights and a strong CTA are crucial."
+  },
+  "logo_asset_filename": "ai_certs_logo.png"
+}

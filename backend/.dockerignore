@@ -1,0 +1,13 @@
+__pycache__
+**/__pycache__
+*.py[cod]
+.env
+.env.*
+.git
+.venv
+venv
+generated-images
+data
+outputs
+*.md
+alembic/versions/__pycache__
